@@ -695,11 +695,20 @@ async function showConsoleQuota(sel, btn){
       const low=q.token_ok && q.available!=null && q.available<=0;
       const color=dead?'#ff6b6b':(low?'#ffa94d':'#c9d1d9');
       const st=dead?`死号/查询失败 <span style="color:#777">${q.reason||''}</span>`:(low?'⚠️ 无额度':'正常');
-      return `<tr style="color:${color}"><td style="padding:3px 12px">${q.email}</td><td style="padding:3px 12px;text-align:right;font-weight:600">${avail} / ${total}</td><td style="padding:3px 12px">${st}</td><td style="padding:3px 12px"><button class="sm" disabled title="阶段2:没额度的单独换号+推adobe">换号</button></td></tr>`;
+      return `<tr style="color:${color}"><td style="padding:3px 12px">${q.email}</td><td style="padding:3px 12px;text-align:right;font-weight:600">${avail} / ${total}</td><td style="padding:3px 12px">${st}</td><td style="padding:3px 12px"><button class="sm qexport" data-email="${q.email}" title="单独重导这一个子号的cookie(协议登录→写池→推adobe),给'库里无cookie'/卡429的号补导,避开批量限流">📤 导出</button></td></tr>`;
     }).join('');
     cell.innerHTML=`<div style="font-size:12px;color:#8b949e;margin-bottom:5px">${sel} · 子号 ${r.count} · 活 ${r.alive} <span style="color:#666">(红=死号/查询失败,橙=无额度;数字越小越该换)</span> <button class="sm" id="qrefresh" style="margin-left:8px">↻刷新</button></div>
       <table style="width:auto;border-collapse:collapse;font-size:13px"><thead><tr style="color:#8b949e"><th style="padding:3px 12px;text-align:left">子号</th><th style="padding:3px 12px">积分(可用/总)</th><th style="padding:3px 12px">状态</th><th style="padding:3px 12px">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
     const rb=cell.querySelector('#qrefresh'); if(rb) rb.onclick=()=>{ sub.remove(); showConsoleQuota(sel, btn); };
+    cell.querySelectorAll('button.qexport').forEach(b=>{ b.onclick=async()=>{
+      const em=b.dataset.email; b.disabled=true; const o=b.textContent; b.textContent='导出中…';
+      try{
+        const rr=await api('/api/console/export_one','POST',{console:sel, email:em});
+        if(rr.ok) appendLog(`[导出子号] ${em} 已开始(协议登录→写池→推adobe),看下方实时日志;完成后点↻刷新看积分`);
+        else alert(rr.msg||'导出失败');
+      }catch(e){ alert('导出异常:'+e); }
+      finally{ b.disabled=false; b.textContent=o; }
+    };});
   }catch(e){ cell.innerHTML=`<span class="tag failed">查询出错: ${e}</span>`; }
   finally{ btn.disabled=false; btn.textContent=old; }
 }

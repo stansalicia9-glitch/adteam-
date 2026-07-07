@@ -890,6 +890,25 @@ def api_console_quota_one():
     return jsonify(r)
 
 
+@app.route("/api/console/export_one", methods=["POST"])
+def api_console_export_one():
+    """单独导出【一个子号】的 cookie(协议登录→写本地池→推adobe)。用于"库里无cookie"/批量卡429的号
+    单独补导,避开批量并发限流。body:{console, email}。复用 _start_console_extract(单号)。"""
+    body = request.get_json(force=True, silent=True) or {}
+    sel = str(body.get("console") or "").strip()
+    email = str(body.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"ok": False, "msg": "缺 email"})
+    items = console_children.get_children(sel) or []
+    one = [it for it in items if str((it or {}).get("email") or "").strip().lower() == email]
+    if not one:
+        return jsonify({"ok": False, "msg": "该子号不在当前清单(可能没存账密),无法登录导出"})
+    if not str((one[0] or {}).get("raw") or "").strip():
+        return jsonify({"ok": False, "msg": "该子号没有账密(raw),无法协议登录导出"})
+    ok, msg = _start_console_extract(sel, one, workers=1, headless=True)
+    return jsonify({"ok": ok, "msg": msg})
+
+
 @app.route("/api/console/child_remove", methods=["POST"])
 def api_console_child_remove():
     """从本地子号清单删掉号(死号/幽灵号清理,纯本地、不碰 Adobe)。body:{items:[{email,console}]} 或 {email,console}。"""
