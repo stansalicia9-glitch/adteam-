@@ -120,6 +120,23 @@ def list_product_users(org_id, product_id, token, page_size=100):
 
 def _extract_qty(x):
     """从产品对象里尽量抠出总席位数（字段名不固定，多候选 + 嵌套兜底）。"""
+    # ★真·总席位在 licenseQuantities:[{quantity,status,endDate}](购买总量)。优先读它——
+    #   累加非过期条目的 quantity。provisionedQuantity 只是"已发放/已用"数(如 10 席只用 1 个
+    #   会读成 1 → 拉子号算出可用 0、一个都不加),不能当总席位。
+    lqs = x.get("licenseQuantities")
+    if isinstance(lqs, list) and lqs:
+        total = 0
+        for lq in lqs:
+            if not isinstance(lq, dict):
+                continue
+            if str(lq.get("status") or "").upper() in ("EXPIRED", "CANCELLED", "TERMINATED"):
+                continue
+            try:
+                total += int(str(lq.get("quantity") or "0").strip())
+            except Exception:
+                pass
+        if total > 0:
+            return total
     for k in ("provisionedQuantity", "grantedQuantity", "totalQuantity", "assignableQuantity",
               "totalLicenseCount", "licenseCount", "quantity", "seats"):
         v = x.get(k)
@@ -190,14 +207,45 @@ def get_product_seats(org_id, product_id, token):
     return 0
 
 
+def list_org_users(org_id, token, page_size=100):
+    """列【组织全体】用户 [{email, id}](含没有任何产品的"幽灵"号)。分页拉全。
+    删加要基于这个来清,才能把历史遗留的无产品幽灵一起删掉(只看产品用户会漏)。"""
+    out, page = [], 0
+    while True:
+        url = f"{BASE}/{org_id}/users?page={page}&page_size={page_size}"
+        r = _request("GET", url, headers=_headers(token), timeout=60)
+        if r.status_code >= 400:
+            raise RuntimeError(f"列组织用户失败 {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        users = data.get("users", data) if isinstance(data, dict) else data
+        if not users:
+            break
+        for u in users:
+            e = str((u or {}).get("email") or (u or {}).get("username") or "").strip()
+            uid = str((u or {}).get("id") or "").strip()
+            if e:
+                out.append({"email": e, "id": uid})
+        try:
+            total_pages = int(r.headers.get("X-Page-Count", "1") or "1")
+        except Exception:
+            total_pages = 1
+        page += 1
+        if page >= total_pages or len(users) < page_size:
+            break
+    return out
+
+
 def remove_users(org_id, product_id, lg_id, token, user_ids, batch=10):
-    """从产品 license group 移除用户(按内部 userId)。PATCH .../users，JSON-Patch remove ops。"""
+    """把用户【整个从组织删除】(按内部 userId)。PATCH org/users,op=remove path=/{uid}。
+
+    ★修复"删加不删"BUG:旧实现是 path=/{uid}/products/{pid}/licenseGroups/{lg}——只剥掉产品许可,
+    用户本人还赖在组织里(丢了产品的"幽灵"),每次删加越积越多(实测一个 org 积到 18 个幽灵)。
+    删加/换号都要求"把旧子号彻底清掉",故改成 org 级删除用户。product_id/lg_id 保留仅为兼容签名。"""
     url = f"{BASE}/{org_id}/users"
     results = []
     for i in range(0, len(user_ids), batch):
         chunk = user_ids[i:i + batch]
-        ops = [{"op": "remove", "path": f"/{uid}/products/{product_id}/licenseGroups/{lg_id}"}
-               for uid in chunk if uid]
+        ops = [{"op": "remove", "path": f"/{uid}"} for uid in chunk if uid]
         if not ops:
             continue
         r = _request("PATCH", url, headers=_headers(token), data=json.dumps(ops), timeout=90)

@@ -98,10 +98,12 @@ def process_console_jil(console, add_file, target_seats, dry_run):
         return []
 
     keep = {e.lower() for e in console.get("keep_admin_emails", [])}
-    users = jil.list_product_users(org_id, product_id, token)   # [{email,id}]
+    # ★基于【组织全体用户】算要删的(不只产品用户)——这样历史遗留的"无产品幽灵"也一并清掉,
+    #   否则只看产品用户会漏删幽灵、越积越多。current_emails 同样用 org 全体(加号去重更准)。
+    users = jil.list_org_users(org_id, token)   # [{email,id}] 含幽灵
     current_emails = {u["email"].lower() for u in users}
     to_remove = [u for u in users if u["email"].lower() not in keep and u.get("id")]
-    print(f"[{tag}] 当前 {len(users)} 用户；保留管理员 {sorted(keep)}；拟删 {len(to_remove)}: {[u['email'] for u in to_remove]}", flush=True)
+    print(f"[{tag}] 组织当前 {len(users)} 用户；保留管理员 {sorted(keep)}；拟删 {len(to_remove)}: {[u['email'] for u in to_remove]}", flush=True)
 
     if dry_run:
         if add_file == MAIL_POOL_SOURCE:
