@@ -63,11 +63,13 @@ def fill_one(console, target, proxy, dry_run, do_extract):
     picks = ajm._reserve_for_team(ajm.MAIL_POOL_SOURCE, gap, current_emails, tag)
     emails = [a["email"] for a in picks]
     added = []
+    dead = set()
     if emails:
         try:
             results = jil.add_users(org_id, product_id, lg, token, emails)
             for r in results:
                 print(f"[{tag}] add status={r['status']}", flush=True)
+            dead = jil.add_users_terminal_dead(results)
             if results and all(r["status"] in (200, 201) for r in results):
                 added = emails
             elif results and all(r["status"] in (200, 201, 207) for r in results):
@@ -85,6 +87,9 @@ def fill_one(console, target, proxy, dry_run, do_extract):
         if acc["email"] in added:
             acm.append_line_locked(acm.ADDED_FILE, acc["raw"])
             acm._mark_pool_success(acc, tag)
+        elif acc["email"].lower() in dead:
+            ajm._mark_reserved_dead(acc, ajm.MAIL_POOL_SOURCE, "TRIAL_ALREADY_CONSUMED 号已烧")
+            print(f"[{tag}] ⚠️ {acc['email']} 被Adobe烧(TRIAL_ALREADY_CONSUMED),标死号不再发", flush=True)
         else:
             ajm._release_reserved(acc, ajm.MAIL_POOL_SOURCE)
     # ★追加到 console_children(保留现有、不覆盖;set_children 内部按 email 去重)

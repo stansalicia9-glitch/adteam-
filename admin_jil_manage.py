@@ -11,6 +11,7 @@ import argparse
 import sys
 import os
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import adobe_jil as jil
@@ -71,6 +72,14 @@ def _release_reserved(acc, add_file):
         acm._release_assigned(acc)
 
 
+def _mark_reserved_dead(acc, add_file, reason):
+    """号被 Adobe 终态烧掉(如 TRIAL_ALREADY_CONSUMED):标死号,别退回池当 available。"""
+    if add_file == MAIL_POOL_SOURCE:
+        pool.mark_account(acc["email"], "deprecated", reason)
+    else:
+        acm._release_assigned(acc)   # 文件源无死号状态,退回(下次靠验活剔除)
+
+
 def _write_extract_accounts(rows):
     fd, path = tempfile.mkstemp(prefix="jil_current_children_", suffix=".txt", dir=acm.BASE_DIR)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -121,6 +130,7 @@ def process_console_jil(console, add_file, target_seats, dry_run):
         return []
 
     # 实删非管理员(保留管理员)
+    removed_ok = False
     if to_remove:
         try:
             rr = jil.remove_users(org_id, product_id, lg, token, [u["id"] for u in to_remove])
@@ -129,21 +139,34 @@ def process_console_jil(console, add_file, target_seats, dry_run):
             if rr and all(r["status"] in (200, 204, 207) for r in rr):
                 print(f"[{tag}] ✅ 已删除 {len(to_remove)} 个非管理员", flush=True)
                 current_emails = set(keep)
+                removed_ok = True
         except Exception as exc:
             print(f"[{tag}] 删除失败: {exc}", flush=True)
 
-    picks = _reserve_for_team(add_file, target_seats, current_emails, tag)
+    # ★删→加之间【等 Adobe 释放 license 席位】再加(核心修复):否则旧席位没释放+新加=EXCEEDED→半加→号被
+    #   TRIAL_ALREADY_CONSUMED 永久烧掉(删加子号"加进0个+烧号"的真根因)。并按【实际空席位】裁剪本次加号数,绝不超发。
+    want = target_seats
+    if removed_ok:
+        free = jil.wait_for_free_seats(org_id, product_id, token, target_seats, tag=tag)
+        if free is not None:
+            want = max(0, min(target_seats, free))
+            if want < target_seats:
+                print(f"[{tag}] 实际空席位 {free} < 目标 {target_seats},本次只加 {want} 个(不超发免烧号)", flush=True)
+
+    picks = _reserve_for_team(add_file, want, current_emails, tag) if want > 0 else []
     emails = [a["email"] for a in picks]
     added = []
+    dead = set()
     if emails:
         try:
             results = jil.add_users(org_id, product_id, lg, token, emails)
             for r in results:
                 print(f"[{tag}] add status={r['status']} -> {str(r['body'])[:300]}", flush=True)
+            dead = jil.add_users_terminal_dead(results)
             if results and all(r["status"] in (200, 201) for r in results):
                 added = emails
             elif results and all(r["status"] in (200, 201, 207) for r in results):
-                # 207 多状态=批里有邮箱失败(已注册/域名被拒等)。别整批当成功——以【重列实际成员】为准,
+                # 207 多状态=批里有邮箱失败。别整批当成功——以【重列实际成员】为准,
                 #   否则失败的号也被写台账/消耗邮箱池/set_children,下游导CK必失败。
                 try:
                     now = {u["email"].lower() for u in jil.list_product_users(org_id, product_id, token)}
@@ -158,10 +181,14 @@ def process_console_jil(console, add_file, target_seats, dry_run):
         if acc["email"] in added:
             acm.append_line_locked(acm.ADDED_FILE, acc["raw"])
             acm._mark_pool_success(acc, tag)
+        elif acc["email"].lower() in dead:
+            # ★被 Adobe 标 TRIAL_ALREADY_CONSUMED = 号已烧,标死号(deprecated)别退回池当available,否则反复发出来继续烧
+            _mark_reserved_dead(acc, add_file, "TRIAL_ALREADY_CONSUMED 号已烧")
+            print(f"[{tag}] ⚠️ {acc['email']} 被Adobe烧(TRIAL_ALREADY_CONSUMED),标死号不再发", flush=True)
         else:
             _release_reserved(acc, add_file)
     console_children.set_children(console, [acc for acc in picks if acc["email"] in added])
-    print(f"[{tag}] ✅ 已提交添加 {len(added)} 个", flush=True)
+    print(f"[{tag}] ✅ 已提交添加 {len(added)} 个" + (f"(烧号 {len(dead)} 个已标死)" if dead else ""), flush=True)
     return added
 
 

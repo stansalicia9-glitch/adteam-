@@ -115,20 +115,30 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
         print(f"[{tag}] 删旧未全部成功,中止该母号不加新(免席位错乱);旧号未删、其cookie/已售状态不动", flush=True)
         return [], []
 
-    # ★删→加之间拟人延迟:别一秒踢一秒加(原子踢加=机器特征),停 ~15s 再加,像真人管理员
+    # ★删→加之间拟人延迟:别一秒踢一秒加(原子踢加=机器特征),停 ~15s 像真人管理员
     _d = random.uniform(13, 17)
-    print(f"[{tag}] 删旧完成,停 {_d:.0f}s 再加新(拟人,避免原子踢加)…", flush=True)
+    print(f"[{tag}] 删旧完成,停 {_d:.0f}s(拟人,避免原子踢加)…", flush=True)
     time.sleep(_d)
+    # ★再【等 Adobe 释放 license 席位】确认空席位≥want 再加:否则旧席位没释放+新加=EXCEEDED→半加→号被
+    #   TRIAL_ALREADY_CONSUMED 永久烧掉;并按实际空席位裁剪加号数,绝不超发。
+    add_n = want
+    free = jil.wait_for_free_seats(org_id, product_id, token, want, tag=tag)
+    if free is not None:
+        add_n = max(0, min(want, free))
+        if add_n < want:
+            print(f"[{tag}] 实际空席位 {free} < 要换 {want},本次只加 {add_n} 个(不超发免烧号)", flush=True)
 
     current_after = current_emails - found
     # 2) 加等量新
-    picks = ajm._reserve_for_team(ajm.MAIL_POOL_SOURCE, want, current_after, tag)
+    picks = ajm._reserve_for_team(ajm.MAIL_POOL_SOURCE, add_n, current_after, tag) if add_n > 0 else []
     emails = [a["email"] for a in picks]
     added = []
+    dead = set()
     if emails:
         try:
             results = jil.add_users(org_id, product_id, lg, token, emails)
             print(f"[{tag}] 加新 status={[r['status'] for r in results]}", flush=True)
+            dead = jil.add_users_terminal_dead(results)
             if results and all(r["status"] in (200, 201) for r in results):
                 added = emails
             elif results and all(r["status"] in (200, 201, 207) for r in results):
@@ -148,6 +158,9 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
             acm.append_line_locked(acm.ADDED_FILE, acc["raw"])
             acm._mark_pool_success(acc, tag)
             added_accounts.append(acc)
+        elif acc["email"].lower() in dead:
+            ajm._mark_reserved_dead(acc, ajm.MAIL_POOL_SOURCE, "TRIAL_ALREADY_CONSUMED 号已烧")
+            print(f"[{tag}] ⚠️ {acc['email']} 被Adobe烧(TRIAL_ALREADY_CONSUMED),标死号不再发", flush=True)
         else:
             ajm._release_reserved(acc, ajm.MAIL_POOL_SOURCE)
 

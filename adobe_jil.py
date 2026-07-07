@@ -209,6 +209,56 @@ def get_product_seats(org_id, product_id, token):
     return 0
 
 
+def free_seats(org_id, product_id, token):
+    """当前空闲 license 席位 = 总席位 − 已持证用户数(<0 归0)。查不到总席位返回 None。"""
+    total = get_product_seats(org_id, product_id, token)
+    if not total:
+        return None
+    licensed = len(list_product_users(org_id, product_id, token))
+    return max(0, total - licensed)
+
+
+def wait_for_free_seats(org_id, product_id, token, need, tag="", rounds=12, interval=8, log=print):
+    """★删人后 Adobe 释放 license 席位有延迟(几秒~1分钟)。轮询直到空席位≥need 或超时。
+    不等就紧接着加号→"旧席位没释放+新加"=ALLOWABLE_LICENSE_COUNT_EXCEEDED→半加(号进org但拒发license)
+    →号被 Adobe 永久标 TRIAL_ALREADY_CONSUMED 烧掉。席位紧(如10席)的母号必踩。返回最终空席位数(None=查不到)。"""
+    last = None
+    for i in range(max(1, rounds)):
+        f = free_seats(org_id, product_id, token)
+        last = f
+        if f is None:
+            return None
+        if f >= need:
+            if i:
+                log(f"[{tag}] ✅ 席位已释放:空 {f} ≥ 需 {need}")
+            return f
+        log(f"[{tag}] 等 Adobe 释放 license 席位:空 {f} < 需 {need},{interval}s 后重查({i + 1}/{rounds})…")
+        time.sleep(interval)
+    log(f"[{tag}] ⚠️ 等席位超时:空 {last} < 需 {need},仍继续(下面加号会按实际空席位裁剪)")
+    return last
+
+
+def add_users_terminal_dead(results):
+    """从 add_users 结果里挑出【终态失败·号已烧】的邮箱(别退回池当 available,否则反复发出来继续烧)。
+    目前:TRIAL_ALREADY_CONSUMED(试用已消耗,该号在此org永久废)。返回小写 email 集合。"""
+    TERMINAL = {"TRIAL_ALREADY_CONSUMED"}
+    dead = set()
+    for r in (results or []):
+        body = r.get("body")
+        if not isinstance(body, list):
+            continue
+        for item in body:
+            if not isinstance(item, dict):
+                continue
+            em = str((item.get("request") or {}).get("email") or item.get("email") or "").strip().lower()
+            resp = item.get("response") or {}
+            ec = str(resp.get("errorCode") or "")
+            ctx = resp.get("errorContext") if isinstance(resp.get("errorContext"), dict) else {}
+            if em and (ec in TERMINAL or (set(ctx.keys()) & TERMINAL)):
+                dead.add(em)
+    return dead
+
+
 def list_org_users(org_id, token, page_size=100):
     """列【组织全体】用户 [{email, id}](含没有任何产品的"幽灵"号)。分页拉全。
     删加要基于这个来清,才能把历史遗留的无产品幽灵一起删掉(只看产品用户会漏)。"""
