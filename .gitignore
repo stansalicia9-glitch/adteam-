@@ -1,0 +1,37 @@
+# 运行时/大二进制
+python/
+ms-playwright/
+node_modules/
+admin_profile/
+firefly_browser_profiles/
+firefly_debug/
+current_child_exports/
+__pycache__/
+*.py[cod]
+_bak_*/
+
+# 日志
+*.log
+
+# 账号/密钥/运行态数据(严禁提交)
+*.json
+*.txt
+*.lock
+*.collab_bak_*
+*.bak
+*.har
+!package.json
+!package-lock.json
+!tsconfig*.json
+
+# 各种备份变体(含真实数据)
+*.bak_*
+admin_console_config*
+firefly_adobe2api_cookies*
+console_children.json*
+push_config*
+push_records*
+firefly_mail_pool_state*
+*_accounts.txt
+_all225.txt
+*.err

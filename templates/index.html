@@ -1,0 +1,1355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adobe Firefly 团队控制台 · 协议版</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  .tabbar{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px 0;border-bottom:1px solid #262b36;padding:8px 0;position:sticky;top:54px;z-index:4;background:#0f1115}
+  .tabbar button{background:#161b22;color:#9aa4af;border:1px solid #21262d;border-radius:8px 8px 0 0;padding:9px 20px;font-size:14px;cursor:pointer}
+  .tabbar button:hover{color:#c9d1d9}
+  .tabbar button.active{background:#1f6feb;color:#fff;border-color:#1f6feb;font-weight:600}
+  main > section.card[data-tab]{display:none}
+  main > section.card[data-tab].tab-on{display:block}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔥 Adobe Firefly 团队控制台 <span style="font-size:13px;color:#3fb950;border:1px solid #2ea043;border-radius:10px;padding:1px 8px;vertical-align:middle">协议版 :5006</span></h1>
+  <div class="taskbar">
+    <span id="taskState" class="pill idle">空闲</span>
+    <span id="taskName" class="muted"></span>
+    <button id="btnStop" class="danger sm">停止任务</button>
+  </div>
+</header>
+
+<main>
+  <div class="tabbar">
+    <button data-tabbtn="overview" class="active">📊 概览 / 邮箱池</button>
+    <button data-tabbtn="console">🛠️ 管理员控制台</button>
+    <button data-tabbtn="subconsole">👥 子号控制台</button>
+    <button data-tabbtn="exportpush">📤 导出 &amp; 推送</button>
+  </div>
+  <!-- 进度概览 -->
+  <section class="card" data-tab="overview">
+    <h2>进度概览</h2>
+    <div class="stats" id="counts">
+      <div class="stat"><b id="cRegistered">-</b><span>已注册小号</span></div>
+      <div class="stat"><b id="cAdded">-</b><span>已加入团队</span></div>
+      <div class="stat"><b id="cMissing">-</b><span>待导Cookie</span></div>
+      <div class="stat ok"><b id="cCookies">-</b><span>已导Cookie</span></div>
+    </div>
+  </section>
+
+  <!-- 邮箱池 -->
+  <section class="card" data-tab="overview">
+    <h2>邮箱池</h2>
+    <div class="stats">
+      <div class="stat"><b id="pTotal">-</b><span>总数</span></div>
+      <div class="stat ok"><b id="pUnused">-</b><span>未用邮箱池</span></div>
+      <div class="stat used"><b id="pUsed">-</b><span>已开邮箱池</span></div>
+      <div class="stat bad"><b id="pFailed">-</b><span>失败</span></div>
+    </div>
+    <details>
+      <summary>导入账号到邮箱池</summary>
+      <p class="muted">格式（每行一个）：<br>
+        · Outlook：<code>邮箱----密码----client_id----refresh_token</code>（带RT走Graph接码）<br>
+        · 域名邮箱：<code>邮箱----密码</code>（无RT，走 cfworker 接码，需 config 配好 CF_ADMIN_PASSWORD 且域名匹配 CF_WORKER_DOMAIN）<br>
+        <b>几千几万选 TXT 文件</b>（自动分批写入，不卡死）。</p>
+      <textarea id="poolText" rows="5" placeholder="粘贴账号，每行一个；大批量请用下方 TXT 文件（选了文件就用文件）"></textarea>
+      <div class="row">
+        <select id="poolMode"><option value="append">追加</option><option value="replace">替换全部</option></select>
+        <input type="file" id="poolFile" accept=".txt,text/plain">
+        <button id="btnImport" class="primary">导入</button>
+        <span id="poolImportStat" class="muted"></span>
+      </div>
+    </details>
+    <div class="row">
+      <button id="btnPoolRefresh" class="sm">刷新</button>
+      <button id="btnPoolVerify" class="sm primary">✅ 验活(剔死号)</button>
+      <label class="muted" style="font-size:12px">并发 <input id="poolVerifyWorkers" type="number" min="1" max="20" value="8" style="width:48px"></label>
+      <button id="btnPoolResetUsed" class="sm">重置(把 in_use/failed 重置为未用)</button>
+      <button id="btnPoolDelAll" class="danger sm">清空邮箱池</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin:-4px 0 6px 2px">验活=纯 API 查 Adobe 账号是否存在(秒级、不开浏览器)。死号(Adobe无此账号)自动标记跳过，之后【删加子号】只用活号。先验活再删加。注：导cookie的"account not found/密码错"大多是反爬假报(号其实活的),真死号其实很少。</div>
+    <label style="font-size:13px;margin:2px 0 8px 2px;display:inline-block">
+      <input type="checkbox" id="chkIpPool"> 🌐 <b>走IP池</b>(导cookie + 验活 每号换不同干净出口IP，防 Adobe per-IP 软封；复用产号节点池) <span id="ipPoolStatus" class="muted"></span>
+    </label>
+    <details id="ipMgr" style="margin:4px 0 10px" ontoggle="if(this.open) loadIpNodes()">
+      <summary>🌐 IP 节点池管理（导入 / 测试 / 删除 / 按国家筛选 · 与产号共享同一个池）</summary>
+      <div class="hint" style="margin:6px 0">流程：①【＋导入订阅】或粘贴节点 → ②【🧪 起核+测出口IP】测国家/延迟/去重 → ③ 勾选要用的国家 → 之后导cookie/验活勾【走IP池】就按所选国家轮询干净出口IP。</div>
+      <div class="row">
+        <input id="ipSubUrl" placeholder="订阅链接(clash/v2ray)" style="flex:1;min-width:240px">
+        <button id="btnIpAddSub" class="sm primary">＋导入订阅</button>
+        <button id="btnIpTest" class="sm warn">🧪 起核+测出口IP</button>
+        <button id="btnIpCoreOn" class="sm">▶ 起核</button>
+        <button id="btnIpCoreOff" class="sm ghost">■ 停核</button>
+        <button id="btnIpNodesRefresh" class="sm ghost">🔄 刷新列表</button>
+        <span id="ipMgrStat" class="muted" style="font-size:12px"></span>
+      </div>
+      <details style="margin:4px 0">
+        <summary>粘贴节点（每行一个 vmess/vless/ss/trojan，或整段 base64 订阅）</summary>
+        <textarea id="ipNodesText" rows="3" placeholder="vmess://...&#10;vless://...&#10;每行一个"></textarea>
+        <button id="btnIpAddNodes" class="sm primary">＋导入粘贴的节点</button>
+      </details>
+      <div style="margin:8px 0 4px">
+        <div class="muted" style="font-size:12px;margin-bottom:4px">✅ <b>只用这些国家的出口IP</b>(导cookie/验活/换号都按此轮询)。点国家切换选中；一个都不选=用默认主流发达国白名单。括号是该国可用节点数。</div>
+        <div id="ipCountryBox" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
+      <div style="margin:8px 0 4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="btnIpDelSel" class="danger sm">🗑 删除选中节点</button>
+        <span id="ipNodeSel" class="muted" style="font-size:12px"></span>
+      </div>
+      <div class="tablewrap" style="max-height:300px"><table id="ipNodeTable">
+        <thead><tr><th style="width:24px"><input type="checkbox" id="ipNodeAll" title="全选"></th><th>节点</th><th>国家</th><th>出口IP</th><th>延迟</th><th>状态</th><th>启用</th></tr></thead>
+        <tbody></tbody></table></div>
+    </details>
+    <details>
+      <summary>邮箱列表（展开/折叠，最多显示 100 条）</summary>
+      <div style="margin:6px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label class="muted" style="font-size:12px">选第 <input id="poolRangeFrom" type="number" min="1" value="1" style="width:58px"> - <input id="poolRangeTo" type="number" min="1" value="100" style="width:58px"> 行</label>
+        <button id="btnPoolRangeSel" class="sm">选中范围</button>
+        <button id="btnPoolDelSel" class="danger sm">🗑 删除选中</button>
+        <span id="poolSelCount" class="muted" style="font-size:12px"></span>
+      </div>
+      <div class="tablewrap"><table id="poolTable"><thead><tr><th style="width:28px"><input type="checkbox" id="poolAll" title="全选当前列表"></th><th>邮箱</th><th>状态</th><th>原因</th></tr></thead><tbody></tbody></table></div>
+    </details>
+  </section>
+
+  <!-- 管理员控制台 -->
+  <section class="card" data-tab="console">
+    <div class="title-row"><h2>管理员控制台</h2><span id="consoleCountTag" class="tag">母号 0 个</span><span id="consoleGroupTag" class="tag">分组：无</span></div>
+    <div class="row">
+      <label>代理 <input id="cfgProxy" type="text" placeholder="http://user:pass@ip:port" style="width:300px"></label>
+      <label>每台席位 <input id="cfgSeats" type="number" min="1" style="width:70px"></label>
+      <label>分组筛选 <select id="groupFilter"><option value="">全部分组</option></select></label>
+      <button id="btnCfgSave" class="sm">保存配置</button>
+      <button id="btnAddConsole" class="sm primary">➕ 添加母号</button>
+      <label>并发 <input id="loginWorkers" type="number" min="1" value="3" style="width:48px"></label>
+      <label><input id="loginHeaded" type="checkbox" checked> 有头(看过程)</label>
+      <button id="btnLoginAll" class="sm primary">⚡ 登录母号</button>
+      <button id="btnScanAll" class="sm">⚡ 批量扫描</button>
+      <button id="btnRunAll" class="sm warn">⚡ 批量删加</button>
+      <button id="btnExtractSelected" class="sm primary">导出选中子号CK</button>
+      <button id="btnDelSelected" class="sm danger">🗑 批量删除</button>
+      <span class="muted">勾选=只处理勾的；不勾=全部</span>
+    </div>
+    <div id="addConsoleForm" class="card" style="display:none; background:#11141a; margin:8px 0;">
+      <div class="row">
+        <label>导入到分组 <input id="ncGroup" type="text" placeholder="例如 8015" style="width:140px"></label>
+      </div>
+      <div class="row"><label style="flex:1">批量母号（每行一个账号）
+        <textarea id="ncBulk" rows="6" style="width:100%; font-family:monospace; font-size:12px"
+          placeholder="每行一个母号，格式：&#10;邮箱----邮箱密码----Adobe密码----client_id----refresh_token&#10;（也支持 | 或空格分隔；最少只填邮箱也行）&#10;admin1@hotmail.com----xxx----yyy----<client_id>----<refresh_token>&#10;admin2@hotmail.com----xxx----yyy----<client_id>----<refresh_token>"></textarea></label></div>
+      <div class="row">
+        <button id="btnAddConsoleSave" class="primary">导入母号</button>
+        <button id="btnAddConsoleCancel" class="sm">取消</button>
+        <span class="muted">只存账号；产品地址 / token 等点【登录母号】时自动提取并写回</span>
+      </div>
+    </div>
+    <div class="tablewrap" style="max-height:60vh">
+      <table id="consoleTable">
+        <thead><tr><th><input type="checkbox" id="chkAllConsoles" title="全选/全不选"></th><th>名称</th><th>管理员邮箱</th><th>分组</th><th>密码/Token</th><th>已播种</th><th>席位(子号)</th><th>当前子号</th><th>操作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <details>
+      <summary>编辑管理员列表 (原始 JSON)</summary>
+      <p class="muted">consoles 数组，每项：name / admin_email / admin_password(Adobe密码,col3) / admin_refresh_token / admin_client_id / product_users_url / keep_admin_emails</p>
+      <textarea id="cfgRaw" rows="12" spellcheck="false"></textarea>
+      <button id="btnRawSave" class="primary">保存整个配置</button>
+    </details>
+    <details style="margin-top:8px"><summary style="cursor:pointer;color:#8b949e;font-size:13px">📖 概念 / 操作三步 / 说明（点开看）</summary>
+    <div class="hint">
+      <div><b>📖 概念</b>：<b>母号</b> = 团队管理员账号；<b>子号</b> = 加进团队、领许可的成员小号。</div>
+      <div style="margin-top:6px"><b>🔑 token 现在全自动</b>：母号只要<b>播种过一次</b>（手动登录/自动登录，列表显示<span class="tag success">已播种</span>），
+        token 失效或没填时，<b>扫描/删加子号会自动用已播种 session 抓新 Bearer 写回</b>；<b>登录母号</b>点了若失效也会自动后台刷新。
+        手动 <b>刷新Token</b> 按钮只是强制刷一次的兜底。<span style="color:#888">（实在抓不到才需 F12 → Network → Copy-as-cURL 手填 <code>jil_token</code>；session 彻底失效则重新【登录母号/播种】）</span></div>
+      <div style="margin-top:6px"><b>▶️ 操作三步</b>：
+        <b>① 登录母号</b>（登录 + 自动提取 产品地址/token + 自动填<b>席位</b>=总席位−管理员）→
+        <b>② 扫描子号</b>（看当前成员、会删谁加谁，只看不动）→
+        <b>③ 删加子号</b>（删掉非管理员旧子号 + 从<b>邮箱池</b>按<b>席位</b>数加新子号，母号保留）。</div>
+      <div style="margin-top:6px; color:#888"><b>说明</b>：删加后自动导 CK 暂时停用；请使用每个母号行里的 <b>导出子号CK</b>，或底部导出全部当前子号。</div>
+      <div style="margin-top:6px"><b>🎟️ 席位</b>：每个母号那栏可手填子号目标；<b>留空=用上方"每台席位"全局值</b>；登录母号会自动填（总席位−管理员1）。删加子号严格按此数，<b>绝不动管理员</b>。</div>
+      <div style="margin-top:6px; color:#f0c451"><b>⚠️ 子号必须是已注册 Adobe 的微软号</b>（outlook/hotmail）；@pengfeiapi.xyz 那种加不进去。</div>
+    </div></details>
+  </section>
+
+  <!-- 子号控制台 -->
+  <section class="card" data-tab="subconsole">
+    <div class="title-row"><h2>👥 子号控制台</h2><span class="muted">所有母号下所有子号 · 按可用积分升序 · 死号/低分排最前</span></div>
+    <div id="allQuotaPanel" style="margin-top:6px">
+      <details id="ledgerDetails" style="margin-bottom:10px;padding:6px 10px;background:#11141a;border-radius:8px;border:1px solid #243049" ontoggle="if(this.open && window.loadLedger) window.loadLedger();">
+        <summary style="cursor:pointer;color:#58a6ff;font-size:13px;font-weight:bold;user-select:none">📊 已售追踪 <span class="muted" style="font-weight:normal;font-size:12px">(点开看 · 按卖出日期分组 · 防客户屯着不用)</span></summary>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">
+          <span id="ledgerState" class="muted" style="font-size:12px"></span>
+          <span style="margin-left:auto"></span>
+          <button id="btnLedger" class="sm">🔄 刷新</button>
+          <label style="font-size:12px"><input type="checkbox" id="ledgerCurrent"> 查当前积分(算"已用/白占"·慢)</label>
+          <button id="btnLedgerBackfill" class="sm warn" title="把历史已导出的号补进台账(基线按4000估、标历史),便于看当前用量">↩ 回填历史已售</button>
+        </div>
+        <div id="ledgerBox" style="margin-top:8px;font-size:12px"></div>
+      </details>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <button id="btnAllQuotaRefresh" class="primary">🔄 刷新所有额度</button>
+        <span id="allQuotaProg" class="muted">点【刷新所有额度】加载(每号~1.5s,边查边出)</span>
+        <input id="quotaSearch" placeholder="🔎 搜邮箱/母号·多个用空格或逗号分隔(客户报一批坏号→批量定位)" style="width:340px;padding:3px 8px;margin-left:6px" oninput="_applyQuotaFilter()">
+        <span id="quotaFilterCount" class="muted" style="font-size:12px"></span>
+        <span style="margin-left:auto"></span>
+        <label class="muted" style="font-size:12px">阈值<input id="quotaThresh" type="number" value="100" style="width:62px">分</label>
+        <button id="btnSelLow" class="sm">☑ 选中低额度/死号</button>
+        <span id="qSelCount" class="muted"></span>
+        <button id="btnMarkSold" class="sm" title="把勾选的子号标记为已售(导出时跳过、防重复卖)">🏷 选中标已售</button>
+        <button id="btnUnmarkSold" class="sm" title="把勾选的子号取消已售(可重新导出卖)">↩ 取消已售</button>
+        <button id="btnDelSel" class="sm" title="从本地清单删掉勾选的死号/幽灵号(换号删不掉的,纯本地、不碰Adobe)" style="background:#5a1d1d;border-color:#7a2a2a">🗑 删除选中</button>
+        <button id="btnSwapDry" class="sm">🔍 dry-run选中</button>
+        <button id="btnSwapSel" class="warn" title="换掉选中旧号+加新号+导cookie进本地池(不推adobe,卖号时门禁只导企业号)">⚡ 一键换选中(换+导池,不推adobe)</button>
+        <button id="btnAutoSwap" class="warn">🤖 自动换全部低于阈值</button>
+        <label class="muted" style="font-size:12px;margin-left:6px"><input type="checkbox" id="chkAutoLoop"> 🔁 定时(每 <input id="autoInterval" type="number" value="10" min="1" style="width:64px"> 分扫一次)</label>
+        <span id="autoLoopStatus" class="muted"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;padding:6px 9px;background:#11141a;border-radius:8px;border:1px solid #3a2a1d">
+        <b style="font-size:13px;color:#d29922">🧪 3P探测换号</b>
+        <span class="muted" style="font-size:12px">探每号3P(veo cost预检·不扣积分),探不通(无权益/408/超时)的号<b>按母号换掉</b>(踢旧+加新+导cookie进池,不推adobe),号位补满继续卖</span>
+        <span style="margin-left:auto"></span>
+        <span id="probe3pStat" class="muted" style="font-size:12px"></span>
+        <button id="btnProbe3pDry" class="sm">🔍 dry-run(只探不换)</button>
+        <button id="btnProbe3p" class="warn" title="探不通的号按母号换成新号(踢旧+加新+导cookie进池)">🔁 探测换号</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;padding:6px 9px;background:#11141a;border-radius:8px;border:1px solid #2a3a4d">
+        <b style="font-size:13px;color:#58a6ff">🎯 真实408探测</b>
+        <span class="muted" style="font-size:12px">每号<b>真实打 generate-async</b> 看实际状态码:<b style="color:#3fb950">200</b>=能出图 / <b style="color:#f85149">403</b>=org无3P权益 / <b style="color:#f85149">408</b>=org被风控甩。比cost预检准,反映Adobe到底给不给生成。<b style="color:#d29922">只检测不换号</b>;能出图的号会排1张图</span>
+        <span style="margin-left:auto"></span>
+        <span id="probe408Stat" class="muted" style="font-size:12px"></span>
+        <button id="btnProbe408" class="sm" title="真实提交generate-async,看Adobe到底返回200/403/408">🎯 真实408探测</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;padding:6px 9px;background:#11141a;border-radius:8px;border:1px solid #1d3a24">
+        <b style="font-size:13px;color:#3fb950">🚀 协议全流程导入</b>
+        <span class="muted" style="font-size:12px">纯 HTTP、零浏览器:母号协议登录→JIL列真子号→导cookie→推adobe2api</span>
+        <span style="margin-left:auto"></span>
+        <label class="muted" style="font-size:12px">母号<input id="pfConsole" placeholder="admin_email" style="width:180px;margin-left:3px"></label>
+        <label class="muted" style="font-size:12px">限<input id="pfLimit" type="number" value="0" style="width:52px">个(0=全)</label>
+        <label class="muted" style="font-size:12px"><input type="checkbox" id="pfPush"> 推adobe2api</label>
+        <button id="btnProtoImport" class="primary sm">🚀 跑全流程</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;padding:6px 9px;background:#11141a;border-radius:8px;border:1px solid #3a3320">
+        <b style="font-size:13px;color:#d29922">🪑 席位检测 / 补满</b>
+        <span class="muted" style="font-size:12px">查每个母号 Adobe 真实子号数,不满就从邮箱池补差额(★只加不删、保留现有号)+导cookie</span>
+        <span style="margin-left:auto"></span>
+        <label class="muted" style="font-size:12px">目标席位<input id="fillSeats" type="number" value="9" style="width:54px;margin-left:3px"></label>
+        <button id="btnFillCheck" class="sm" onclick="_fillSeats(true)">🔍 检测缺口(只看)</button>
+        <button id="btnFillRun" class="warn sm" onclick="_fillSeats(false)">➕ 补满所有母号</button>
+        <button id="btnSyncChildren" class="sm" onclick="_syncChildren()" title="从Adobe真实成员同步回本地清单(修复🗑误删真号、清单<Adobe真实)">🔄 从Adobe同步清单</button>
+      </div>
+      <div class="tablewrap" style="max-height:68vh">
+        <table><thead><tr><th><input type="checkbox" id="qAll"></th><th>子号</th><th>母号</th><th>积分(可用/总)</th><th>状态</th><th>操作</th></tr></thead><tbody id="allQuotaBody"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 导出卖号(adobe2api JSON) -->
+  <section class="card" data-tab="exportpush">
+    <div class="title-row"><h2>📦 导出卖号 (adobe2api JSON)</h2><span class="muted">从本地池导出客户能直接导入的 json · 已导出自动跳过、防撞号</span></div>
+    <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px">
+      <span id="sellStats" class="muted">点【刷新账本】</span>
+      <button id="btnSellStats" class="sm">🔄 刷新账本</button>
+      <span style="margin-left:auto"></span>
+      <label>数量 <input id="sellLimit" type="number" value="50" min="0" style="width:72px"> 个(0=全部未导出)</label>
+      <button id="btnSellExport" class="primary">📥 导出并下载</button>
+    </div>
+    <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid #1d2430">
+      <span class="muted" style="font-size:12px">标记【已发给客户的旧导出文件】(防重复卖,靠 account_id 认号、刷token稍慢):</span>
+      <input id="sellMarkFile" type="file" accept=".json,application/json" style="font-size:12px">
+      <button id="btnSellMark" class="sm warn">🏷 标记已导出</button>
+      <span id="sellMarkState" class="muted"></span>
+    </div>
+  </section>
+
+  <!-- 导出 Cookie -->
+  <section class="card" data-tab="exportpush">
+    <h2>导出 Cookie（登录→选企业→跳过手机号→导出）</h2>
+    <div class="row">
+      <label>账号文件
+        <select id="extFile">
+          <option value="__current_children_all__">全部母号当前子号</option>
+          <option value="added_accounts.txt">added_accounts.txt(历史添加日志)</option>
+          <option value="team_seats.txt">team_seats.txt(带RT注册号全量)</option>
+          <option value="missing_cookie_accounts.txt">missing_cookie_accounts.txt</option>
+          <option value="registered_accounts.txt">registered_accounts.txt</option>
+        </select>
+      </label>
+      <label>并发 <input id="extWorkers" type="number" min="1" value="3" style="width:60px"></label>
+      <label><input id="extHeadless" type="checkbox" checked> 无头</label>
+      <button id="btnExtract" class="primary">开始导出</button>
+      <button id="btnExtractStop" class="danger">⏹ 停止任务</button>
+      <button id="btnClearCookies" class="danger sm">🗑 清空cookie库</button>
+      <span id="extState" class="muted"></span>
+    </div>
+  </section>
+
+  <!-- 推送 API -->
+  <section class="card" data-tab="exportpush">
+    <div class="section-head"><h2>推送 API</h2><button id="btnPushRefresh" class="sm">刷新记录</button></div>
+    <div class="row">
+      <label>配置范围 <select id="pushGroup"><option value="">默认</option></select></label>
+      <label style="flex:1; min-width:320px">API地址
+        <input id="pushUrl" type="text" placeholder="http://127.0.0.1:8015/api/v1/external/accounts/push" style="width:100%">
+      </label>
+      <label>Push Key
+        <input id="pushKey" type="text" placeholder="未设置(此处显示当前Key)" style="width:260px">
+      </label>
+      <label>账号类型
+        <select id="pushType">
+          <option value="普通号">普通号</option>
+          <option value="千分号">千分号</option>
+          <option value="万分号">万分号</option>
+        </select>
+      </label>
+      <label><input id="pushEnabled" type="checkbox"> 推送总开关(自动监控/换号/全流程/导出 全听它;手动【推送】不受限)</label>
+      <button id="btnPushSave" class="sm primary">保存推送配置</button>
+      <button id="btnPushClear" class="danger sm">清空推送记录</button>
+      <span id="pushState" class="muted"></span>
+    </div>
+    <div class="tablewrap pushlog">
+      <table id="pushTable">
+        <thead><tr><th>时间</th><th>分组</th><th>母号</th><th>数量</th><th>状态</th><th>HTTP</th><th>Job</th><th>错误</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 日志 -->
+  <section class="card">
+    <div class="section-head"><h2>实时日志</h2><button id="btnClearLog" class="sm">清空日志</button></div>
+    <pre id="log" class="log"></pre>
+  </section>
+</main>
+
+<footer class="version">版本 1.0.4</footer>
+
+<!-- 右侧实时进度浮窗（任务跑时弹出，完成后收回） -->
+<style>
+#progressToast{ position:fixed; right:0; top:96px; width:320px; max-width:44vw;
+  background:#11141a; border:1px solid #2a3344; border-right:none; border-radius:12px 0 0 12px;
+  box-shadow:-6px 6px 22px rgba(0,0,0,.5); padding:12px 14px; z-index:9999;
+  transform:translateX(110%); transition:transform .35s ease; }
+#progressToast.show{ transform:translateX(0); }
+#progressToast .pt-head{ display:flex; align-items:center; gap:8px; font-size:13px; }
+#progressToast .pt-head b{ flex:1; color:#e6edf3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#progressToast #ptClose{ cursor:pointer; color:#8b98a9; font-size:18px; line-height:1; padding:0 2px; }
+#progressToast #ptClose:hover{ color:#e6edf3; }
+#progressToast .pt-step{ margin-top:10px; font-size:15px; color:#dbe6f0; line-height:1.6; }
+#progressToast.done{ border-color:#2e7d32; }
+.pt-spin{ width:13px; height:13px; border:2px solid #3a4658; border-top-color:#4aa3ff; border-radius:50%;
+  display:inline-block; animation:ptspin .8s linear infinite; flex:none; }
+@keyframes ptspin{ to{ transform:rotate(360deg);} }
+#progressToast.done .pt-spin{ animation:none; border-color:#2e7d32; border-top-color:#2e7d32; }
+/* 收起后的小handle，点一下可重新展开当前任务 */
+#ptReopen{ position:fixed; right:0; top:96px; z-index:9998; display:none;
+  background:#1b6fd6; color:#fff; border:none; border-radius:8px 0 0 8px; padding:7px 9px; cursor:pointer; font-size:12px; }
+</style>
+<div id="progressToast">
+  <div class="pt-head"><span class="pt-spin"></span><b id="ptTitle">任务进行中</b><span id="ptClose" title="收起">×</span></div>
+  <div id="ptStep" class="pt-step">…</div>
+</div>
+<button id="ptReopen" title="展开进度">⟨ 进度</button>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (u, m, b) => fetch(u, {method:m||'GET', headers:{'Content-Type':'application/json'}, body:b?JSON.stringify(b):undefined}).then(r=>r.json());
+
+// ---- 日志 SSE ----
+const logEl = $('#log');
+// 日志行 → 友好阶段（首个命中的为准；没命中就保持上一个阶段，不闪原始英文）
+const PT_STAGES = [
+  [/using .*Chromium|\[Browser\]/i,                                   '🌐 正在打开浏览器…'],
+  [/opening Firefly login dialog|choosing Adobe email|sign-in\/create|打开登录/i, '🔓 正在进入登录页…'],
+  [/filling Adobe.*email|signin email|输入.*邮箱/i,                    '✍️ 正在输入账号…'],
+  [/entering Adobe password|输入管理员密码|visible_password/i,         '🔑 正在输入密码…'],
+  [/\[Mail\]|verification|requesting newest code|verification code|读取验证码|邮箱验证码/i, '📩 正在读取验证码…'],
+  [/profile chooser|selecting business|picked team profile|选企业/i,   '🏢 正在选择企业…'],
+  [/识别产品|席位[:：]|product_users_url=|jil_token=/i,                '🔎 正在提取母号信息…'],
+  [/\[Cookie\]|readiness confirmed|adobe2api cookie JSON updated|导出 cookie/i, '🍪 正在导出 cookie…'],
+  [/OK cookie exported|cookie_unique=|提取完成|#### 已保存|登录成功|已是登录态/i, '✅ 完成一项'],
+];
+function _ptStageFor(line){
+  for(const [re,label] of PT_STAGES){ if(re.test(line)) return label; }
+  return null;
+}
+// ★日志上限:以前 textContent 无裁剪、开久了+刷屏会堆几万行 DOM 文本→页面越来越卡。
+//   改成只留最近 _LOG_MAX 行(数组维护),根治"开久了就卡"。
+const _LOG_MAX = 1200;
+const _logBuf = [];
+function appendLog(line){
+  _logBuf.push(line);
+  if(_logBuf.length > _LOG_MAX) _logBuf.splice(0, _logBuf.length - _LOG_MAX);
+  logEl.textContent = _logBuf.join("\n") + "\n"; logEl.scrollTop = logEl.scrollHeight;
+  const t=$('#progressToast');
+  if(t && t.classList.contains('show')){
+    const stage=_ptStageFor(String(line));
+    if(stage) $('#ptStep').textContent = stage;   // 只在命中已知阶段时更新
+  }
+}
+// ---- 右侧进度浮窗：弹出/收回 ----
+let _ptManualHide=false;
+function ptShow(title){
+  const t=$('#progressToast'); _ptManualHide=false;
+  t.classList.remove('done'); t.classList.add('show');
+  $('#ptReopen').style.display='none';
+  $('#ptTitle').textContent=title||'任务进行中';
+}
+function ptDone(){
+  const t=$('#progressToast');
+  t.classList.add('done'); $('#ptTitle').textContent='✅ 完成';
+  $('#ptStep').textContent='任务结束';
+  setTimeout(()=>{ t.classList.remove('show'); $('#ptReopen').style.display='none'; }, 2500);
+}
+$('#ptClose').onclick=()=>{ $('#progressToast').classList.remove('show'); _ptManualHide=true;
+  $('#ptReopen').style.display = _ptRunning ? 'block':'none'; };
+$('#ptReopen').onclick=()=>{ _ptManualHide=false; $('#ptReopen').style.display='none';
+  $('#progressToast').classList.add('show'); };
+let _ptRunning=false;
+function startSSE(){
+  const es = new EventSource('/api/logs');
+  es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch(_){ appendLog(e.data);} };
+  es.onerror = () => { /* 自动重连 */ };
+}
+startSSE();
+
+// ---- 任务状态轮询 ----
+let _wasRunning=false;
+async function pollStatus(){
+  try{
+    const s = await api('/api/task/status');
+    const el = $('#taskState');
+    if(s.running){ el.textContent='运行中'; el.className='pill run'; $('#taskName').textContent=s.name; }
+    else { el.textContent='空闲'; el.className='pill idle'; $('#taskName').textContent=''; }
+    _ptRunning = s.running;
+    // 任务刚开始 → 弹出进度浮窗；刚结束 → 显示完成并收回 + 自动刷新各区(省手动F5)
+    if(!_wasRunning && s.running && !_ptManualHide){ ptShow(s.name); }
+    if(s.running && !_ptManualHide){ $('#ptTitle').textContent=s.name; }
+    if(_wasRunning && !s.running){ ptDone(); loadConsoles(); loadCounts(); loadPool(); loadPushRecords(); }
+    _wasRunning = s.running;
+  }catch(_){}
+}
+setInterval(pollStatus, 2000); pollStatus();
+$('#btnStop').onclick = async()=>{ await api('/api/task/stop','POST'); };
+$('#btnClearLog').onclick = async()=>{ _logBuf.length=0; logEl.textContent=''; await api('/api/logs/clear','POST',{}); };
+
+// ---- 进度计数 ----
+async function loadCounts(){
+  const c = await api('/api/counts');
+  $('#cRegistered').textContent=c.registered; $('#cAdded').textContent=c.added;
+  $('#cMissing').textContent=c.missing; $('#cCookies').textContent=c.cookies;
+}
+
+// ---- 邮箱池 ----
+function _zhStatus(s){
+  return ({success:'成功',failed:'失败',deprecated:'弃用(死号)',available:'未用',in_use:'使用中'})[s]||s||'';
+}
+function _zhReason(r){
+  r=String(r||''); if(!r) return ''; var m;
+  if(m=r.match(/^added to team (.+)$/i)) return '已加入团队 '+m[1];
+  if(m=r.match(/^reserved for team (.+)$/i)) return '已预占给团队 '+m[1];
+  if(/^cookie exported/i.test(r)) return '已导出cookie';
+  if(/^cookie already exists/i.test(r)) return '已有cookie';
+  if(/team add failed/i.test(r)) return '加团队失败,已释放';
+  if(/^cdpreg existing/i.test(r)) return '产号(号已存在)';
+  if(/^cdpreg/i.test(r)) return '产号';
+  if(/no usable mailbox/i.test(r)) return '无可用邮箱接码';
+  if(/missing Adobe account password/i.test(r)) return '缺Adobe密码';
+  if(/incorrect password/i.test(r)) return '密码错误(多为反爬假报)';
+  if(/account not found/i.test(r)) return 'Adobe查无此号(多为反爬假报)';
+  if(/Cookie export failed/i.test(r)) return '导出cookie失败';
+  if(/email verification was not completed/i.test(r)) return '邮箱验证未完成';
+  return r;
+}
+async function loadPool(){
+  const d = await api('/api/pool?limit=100');
+  const s = d.summary;
+  const fmt=n=>Number(n||0).toLocaleString();
+  $('#pTotal').textContent=fmt(s.total); $('#pUnused').textContent=fmt(s.unused);
+  $('#pUsed').textContent=fmt(s.used); $('#pFailed').textContent=fmt(s.failed);
+  // 一次性拼接 innerHTML（5万行也不逐行 appendChild，避免卡死）
+  $('#poolTable tbody').innerHTML = d.items.map(it=>
+    `<tr><td style="width:28px"><input type="checkbox" class="poolChk" data-email="${it.email}"></td><td>${it.email}</td><td><span class="tag ${it.status}">${_zhStatus(it.status)}</span></td><td class="muted">${_zhReason(it.reason)}</td></tr>`
+  ).join('');
+  var pa=document.getElementById('poolAll'); if(pa) pa.checked=false;
+  _poolSel();
+}
+function _poolSel(){ var n=document.querySelectorAll('.poolChk:checked').length; var e=document.getElementById('poolSelCount'); if(e) e.textContent=n?('已选 '+n+' 个'):''; }
+$('#btnPoolRefresh').onclick=loadPool;
+$('#btnPoolVerify').onclick=async()=>{
+  if(!confirm('验活：纯 API 查邮箱池每个账号 Adobe 是否存在(秒级,不开浏览器)。死号(Adobe无此账号)自动标记 deprecated，之后删加子号自动跳过。\n几千个号几分钟，可调并发。\n\n是否开始？')) return;
+  const w=parseInt($('#poolVerifyWorkers').value||'8');
+  const r=await api('/api/pool/verify','POST',{workers:w});
+  if(r.ok){ appendLog(`[验活] 已开始(并发${w})，看下方实时日志；活号保留、死号直接从池删除`); }
+  else alert(r.msg||'启动失败');
+};
+async function loadIpPoolStatus(){
+  try{
+    const d=await api('/api/ippool/status'); const p=d.pool||{};
+    $('#chkIpPool').checked = !!d.use_ip_pool;
+    $('#ipPoolStatus').textContent = p.ok ? `(${p.healthy||0}个健康IP，核${p.core_running?'运行中':'未启'})` : (p.error?`(池异常:${p.error})`:'');
+  }catch(e){}
+}
+$('#chkIpPool').onchange=async()=>{
+  const on=$('#chkIpPool').checked;
+  $('#ipPoolStatus').textContent='处理中…';
+  const r=await api('/api/ippool/toggle','POST',{on}); const p=(r&&r.pool)||{};
+  $('#ipPoolStatus').textContent = on ? (p.ok?`(已开，${p.healthy||0}个健康IP，核${p.core_running?'运行中':'启动中'})`:`(开启但池异常:${p.error||''})`) : '(已关)';
+  appendLog(`[IP池] ${on?'已开启':'已关闭'}${p.ok?('，健康IP '+(p.healthy||0)):''}`);
+};
+loadIpPoolStatus();
+// ===== IP 节点池管理 =====
+function _ipEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _ipNodeSel(){ const n=document.querySelectorAll('.ipChk:checked').length; const e=$('#ipNodeSel'); if(e) e.textContent=n?('已选 '+n+' 个'):''; }
+async function loadIpNodes(){
+  $('#ipMgrStat').textContent='加载中…';
+  try{
+    const d=await api('/api/ippool/nodes');
+    if(!d.ok){ $('#ipMgrStat').textContent='池异常：'+(d.error||''); return; }
+    const nodes=d.nodes||[], allow=new Set((d.allow_cc||[]).map(c=>String(c).toUpperCase()));
+    $('#ipMgrStat').textContent=`共 ${d.total} 节点，可用 ${d.healthy}（核${d.core_running?'运行中':'未启'}）`;
+    const counts=d.counts||{}, ccs=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+    $('#ipCountryBox').innerHTML = ccs.length ? ccs.map(cc=>
+      `<button class="sm ipcc ${allow.has(cc)?'primary':'ghost'}" data-cc="${cc}">${cc} (${counts[cc]})</button>`
+    ).join('') : '<span class="muted" style="font-size:12px">还没测出口IP（先点【🧪 起核+测出口IP】，测完这里按国家列出节点数）</span>';
+    $('#ipNodeTable tbody').innerHTML = nodes.map(n=>{
+      const st = n.fake?'<span class="tag failed">假节点</span>' : n.dup?'<span class="tag in_use">重复IP</span>' : !n.exit_ip?'<span class="tag">未测</span>' : n.healthy?'<span class="tag success">可用</span>':'<span class="tag in_use">不在所选国</span>';
+      return `<tr><td><input type="checkbox" class="ipChk" data-name="${_ipEsc(n.name)}"></td>`+
+        `<td title="${_ipEsc(n.name)}">${_ipEsc((n.name||'').slice(0,22))}</td>`+
+        `<td>${n.cc||'<span class="muted">?</span>'}</td>`+
+        `<td class="muted">${n.exit_ip||'-'}</td>`+
+        `<td class="muted">${n.delay!=null?n.delay+'ms':'-'}</td>`+
+        `<td>${st}</td>`+
+        `<td><input type="checkbox" class="ipEn" data-name="${_ipEsc(n.name)}" ${n.enabled?'checked':''}></td></tr>`;
+    }).join('');
+    const na=$('#ipNodeAll'); if(na) na.checked=false; _ipNodeSel();
+  }catch(e){ $('#ipMgrStat').textContent='加载失败 '+e; }
+}
+(function(){
+  const tb=$('#ipNodeTable');
+  if(tb) tb.addEventListener('change', async (e)=>{
+    if(e.target.classList.contains('ipChk')) _ipNodeSel();
+    if(e.target.classList.contains('ipEn')){ await api('/api/ippool/enable','POST',{name:e.target.dataset.name, on:e.target.checked}); }
+  });
+  const na=$('#ipNodeAll'); if(na) na.onchange=()=>{ document.querySelectorAll('.ipChk').forEach(c=>c.checked=na.checked); _ipNodeSel(); };
+  const cb=$('#ipCountryBox');
+  if(cb) cb.addEventListener('click', async (e)=>{
+    const b=e.target.closest('.ipcc'); if(!b) return;
+    b.classList.toggle('primary'); b.classList.toggle('ghost');
+    const sel=[].slice.call(document.querySelectorAll('#ipCountryBox .ipcc.primary')).map(x=>x.dataset.cc);
+    const r=await api('/api/ippool/country','POST',{cc:sel});
+    appendLog('[IP池] 只用国家 → '+((r.allow_cc||[]).join(',')||'(默认主流发达国白名单)'));
+  });
+  const bs=$('#btnIpAddSub'); if(bs) bs.onclick=async()=>{
+    const u=$('#ipSubUrl').value.trim(); if(!u){ alert('填订阅链接'); return; }
+    $('#ipMgrStat').textContent='导入中…';
+    const r=await api('/api/ippool/import','POST',{sub_url:u});
+    $('#ipMgrStat').textContent=r.msg||''; appendLog('[IP池] '+(r.msg||'导入完成')); loadIpNodes();
+  };
+  const bn=$('#btnIpAddNodes'); if(bn) bn.onclick=async()=>{
+    const t=$('#ipNodesText').value.trim(); if(!t){ alert('粘贴节点'); return; }
+    const r=await api('/api/ippool/import','POST',{nodes_text:t});
+    $('#ipMgrStat').textContent=r.msg||''; appendLog('[IP池] '+(r.msg||'导入完成')); $('#ipNodesText').value=''; loadIpNodes();
+  };
+  const bt=$('#btnIpTest'); if(bt) bt.onclick=async()=>{
+    const r=await api('/api/ippool/test','POST',{});
+    if(r.ok) appendLog('[IP池] 已开始测出口IP，看下方实时日志；测完点【🔄 刷新列表】看国家/延迟'); else alert(r.msg||'启动失败');
+  };
+  const c1=$('#btnIpCoreOn'); if(c1) c1.onclick=async()=>{ const r=await api('/api/ippool/core','POST',{on:true}); $('#ipMgrStat').textContent=r.msg||''; appendLog('[IP池] '+(r.msg||'')); };
+  const c0=$('#btnIpCoreOff'); if(c0) c0.onclick=async()=>{ const r=await api('/api/ippool/core','POST',{on:false}); $('#ipMgrStat').textContent=r.msg||''; appendLog('[IP池] '+(r.msg||'')); };
+  const rf=$('#btnIpNodesRefresh'); if(rf) rf.onclick=loadIpNodes;
+  const dl=$('#btnIpDelSel'); if(dl) dl.onclick=async()=>{
+    const names=[].slice.call(document.querySelectorAll('.ipChk:checked')).map(c=>c.dataset.name);
+    if(!names.length){ alert('先勾选节点'); return; }
+    if(!confirm('确定从节点池删除选中的 '+names.length+' 个节点？')) return;
+    const r=await api('/api/ippool/remove','POST',{names});
+    appendLog('[IP池] 已删除 '+(r.removed||0)+' 个节点，剩 '+(r.left||0)); loadIpNodes();
+  };
+})();
+$('#btnImport').onclick=async()=>{
+  const mode=$('#poolMode').value, file=$('#poolFile').files[0];
+  let text = file ? await file.text() : $('#poolText').value;
+  const lines = text.split(/\r?\n/).map(s=>s.trim()).filter(s=>s && !s.startsWith('#'));
+  if(!lines.length){ alert('没有可导入的账号'); return; }
+  const CHUNK=2000, btn=$('#btnImport'), stat=$('#poolImportStat');
+  btn.disabled=true; let done=0, sumImported=0, ok=true;
+  try{
+    for(let i=0;i<lines.length;i+=CHUNK){
+      const part=lines.slice(i, i+CHUNK);
+      const m=(i===0)?mode:'append';   // 只有首批用所选模式（替换只清一次），其余一律追加
+      const r=await api('/api/pool/import','POST',{text:part.join('\n'), mode:m});
+      if(!r.ok){ ok=false; alert(`第 ${Math.floor(i/CHUNK)+1} 批失败：${r.msg}`); break; }
+      done=Math.min(i+CHUNK, lines.length);
+      sumImported += (r.result && r.result.imported) || 0;
+      stat.textContent=`导入中… ${done}/${lines.length}`;
+    }
+    if(ok){ stat.textContent=`完成：提交 ${lines.length} 行，入池 ${sumImported}`;
+      appendLog(`[邮箱池导入] ${file?('文件 '+file.name+' '):''}共 ${lines.length} 行（首批模式=${mode}），入池 ${sumImported}`); }
+  } finally { btn.disabled=false; }
+  $('#poolText').value=''; $('#poolFile').value=''; loadPool();
+};
+$('#btnPoolResetUsed').onclick=async()=>{
+  await api('/api/pool/reset','POST',{statuses:['in_use','failed']}); loadPool();
+};
+$('#btnPoolDelAll').onclick=async()=>{ if(confirm('确定清空整个邮箱池？')){ await api('/api/pool/delete','POST',{all:true}); loadPool(); } };
+(function(){
+  var pt=document.getElementById('poolTable');
+  if(pt) pt.addEventListener('change', function(e){ if(e.target&&e.target.classList&&e.target.classList.contains('poolChk')) _poolSel(); });
+  var pa=document.getElementById('poolAll');
+  if(pa) pa.onchange=function(){ document.querySelectorAll('.poolChk').forEach(function(c){c.checked=pa.checked;}); _poolSel(); };
+  var rs=document.getElementById('btnPoolRangeSel');
+  if(rs) rs.onclick=function(){
+    var f=parseInt(document.getElementById('poolRangeFrom').value)||1, t=parseInt(document.getElementById('poolRangeTo').value)||1e9;
+    document.querySelectorAll('.poolChk').forEach(function(c,i){ c.checked=(i+1>=f && i+1<=t); }); _poolSel();
+  };
+  var ds=document.getElementById('btnPoolDelSel');
+  if(ds) ds.onclick=async function(){
+    var ems=[].slice.call(document.querySelectorAll('.poolChk:checked')).map(function(c){return c.dataset.email;});
+    if(!ems.length){ alert('先勾选邮箱，或用"选第 X-Y 行 → 选中范围"'); return; }
+    if(!confirm('确定从邮箱池删除选中的 '+ems.length+' 个邮箱？(不可恢复)')) return;
+    var r=await api('/api/pool/delete','POST',{emails:ems});
+    appendLog('[邮箱池] 已删除 '+(r.deleted||0)+' 个'); loadPool();
+  };
+})();
+
+// ---- 管理员控制台 ----
+let _allConsoles = [];
+let _pushConfig = null;
+function _consoleGroup(c){ return (c && c.group ? String(c.group).trim() : ''); }
+function _groupSummary(consoles){
+  const counts = {};
+  for(const c of consoles||[]){
+    const g = _consoleGroup(c) || '未分组';
+    counts[g] = (counts[g]||0) + 1;
+  }
+  const names = Object.keys(counts).sort((a,b)=>(a==='未分组'?1:b==='未分组'?-1:a.localeCompare(b)));
+  return names.length ? names.map(g=>`${g}(${counts[g]})`).join('、') : '无';
+}
+function _visibleConsoles(){ return [...document.querySelectorAll('.consoleChk')].map(x=>x.dataset.sel); }
+function _selectedOrVisibleConsoles(){
+  const checked=_checkedConsoles();
+  return checked.length ? checked : _visibleConsoles();
+}
+function _numText(s){ return parseInt(String(s||'0').replace(/[^\d]/g,''),10) || 0; }
+function _consoleBySel(sel){
+  const key=String(sel||'').toLowerCase();
+  return (_allConsoles||[]).find(c=>String(c.admin_email||'').toLowerCase()===key || String(c.name||'').toLowerCase()===key);
+}
+function _seatNeedForConsole(sel){
+  const c=_consoleBySel(sel) || {};
+  const raw=(c.seats!=='' && c.seats!=null) ? c.seats : $('#cfgSeats').value;
+  return Math.max(0, parseInt(raw||'0',10) || 0);
+}
+function _estimateSeatNeed(list){
+  return (list||[]).reduce((sum, sel)=>sum + _seatNeedForConsole(sel), 0);
+}
+function _unusedPoolCount(){ return _numText($('#pUnused').textContent); }
+function _confirmPoolCapacity(list, actionText){
+  const need=_estimateSeatNeed(list);
+  const available=_unusedPoolCount();
+  if(need > available){
+    return confirm(`${actionText}预计需要 ${need} 个邮箱，当前未用邮箱池 ${available} 个，可能不够。\n是否继续操作？`);
+  }
+  return true;
+}
+function _renderGroupOptions(groups){
+  const current=$('#groupFilter').value;
+  $('#groupFilter').innerHTML = '<option value="">全部分组</option>' + (groups||[]).map(g=>`<option value="${g}">${g}</option>`).join('');
+  if([...(groups||[]), ''].includes(current)) $('#groupFilter').value=current;
+  const pg=$('#pushGroup'), pc=pg.value;
+  pg.innerHTML = '<option value="">默认</option>' + (groups||[]).map(g=>`<option value="${g}">${g}</option>`).join('');
+  if([...(groups||[]), ''].includes(pc)) pg.value=pc;
+  // ★【导出 Cookie】账号文件下拉也加分组(选某组=只导该组母号的子号,走 __group__ 后端过滤)
+  const ext=$('#extFile');
+  if(ext){
+    const ev=ext.value;
+    [...ext.querySelectorAll('option[data-grp]')].forEach(o=>o.remove());
+    (groups||[]).forEach(g=>{ const o=document.createElement('option'); o.value='__group__'+g; o.textContent='📁 分组: '+g; o.dataset.grp='1'; ext.appendChild(o); });
+    if([...ext.options].some(o=>o.value===ev)) ext.value=ev;
+  }
+}
+async function showConsoleQuota(sel, btn){
+  // 点开/收起母号下方的子号额度子表(只读查 Firefly 积分,不顶登录态)
+  const row = btn.closest('tr');
+  let sub = row.nextElementSibling;
+  if(sub && sub.classList && sub.classList.contains('quota-sub') && sub.dataset.sel===sel){ sub.remove(); return; }
+  document.querySelectorAll('tr.quota-sub').forEach(e=>e.remove());
+  sub = document.createElement('tr'); sub.className='quota-sub'; sub.dataset.sel=sel;
+  sub.innerHTML=`<td colspan="9" style="background:#0d1117;padding:8px 14px"><span class="muted">查询 ${sel} 各子号积分中…(每号约1.5s)</span></td>`;
+  row.after(sub);
+  const cell = sub.firstElementChild;
+  const old=btn.textContent; btn.disabled=true; btn.textContent='查询中…';
+  try{
+    const r=await api('/api/console/quota','POST',{console:sel});
+    if(!r.ok){ cell.innerHTML=`<span class="tag failed">${r.msg||'查询失败'}</span>`; return; }
+    const rows=(r.quotas||[]).map(q=>{
+      const dead=!q.token_ok;
+      const avail=(q.available==null)?'—':q.available;
+      const total=(q.total==null)?'—':q.total;
+      const low=q.token_ok && q.available!=null && q.available<=0;
+      const color=dead?'#ff6b6b':(low?'#ffa94d':'#c9d1d9');
+      const st=dead?`死号/查询失败 <span style="color:#777">${q.reason||''}</span>`:(low?'⚠️ 无额度':'正常');
+      return `<tr style="color:${color}"><td style="padding:3px 12px">${q.email}</td><td style="padding:3px 12px;text-align:right;font-weight:600">${avail} / ${total}</td><td style="padding:3px 12px">${st}</td><td style="padding:3px 12px"><button class="sm" disabled title="阶段2:没额度的单独换号+推adobe">换号</button></td></tr>`;
+    }).join('');
+    cell.innerHTML=`<div style="font-size:12px;color:#8b949e;margin-bottom:5px">${sel} · 子号 ${r.count} · 活 ${r.alive} <span style="color:#666">(红=死号/查询失败,橙=无额度;数字越小越该换)</span> <button class="sm" id="qrefresh" style="margin-left:8px">↻刷新</button></div>
+      <table style="width:auto;border-collapse:collapse;font-size:13px"><thead><tr style="color:#8b949e"><th style="padding:3px 12px;text-align:left">子号</th><th style="padding:3px 12px">积分(可用/总)</th><th style="padding:3px 12px">状态</th><th style="padding:3px 12px">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const rb=cell.querySelector('#qrefresh'); if(rb) rb.onclick=()=>{ sub.remove(); showConsoleQuota(sel, btn); };
+  }catch(e){ cell.innerHTML=`<span class="tag failed">查询出错: ${e}</span>`; }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+function _showCachedQuota(){
+  try{
+    var c=JSON.parse(localStorage.getItem('ff_quota_cache')||'null');
+    if(c && c.data && c.data.length){
+      _renderAllQuota(c.data, document.getElementById('allQuotaBody'));
+      var mins=Math.round((Date.now()-(c.ts||0))/60000);
+      var p=document.getElementById('allQuotaProg'); if(p) p.textContent='显示上次结果('+mins+'分钟前)· 点【🔄刷新所有额度】更新';
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+function _ensureQuotaShown(){
+  if(window._quotaShown) return;
+  if(!((_allConsoles||[]).length)) return;
+  window._quotaShown=true;
+  if(!_showCachedQuota()){ try{ loadAllQuota(); }catch(e){} }
+}
+async function loadAllQuota(){
+  // 一键查全部母号下所有子号的额度,汇总成一张表(按可用积分升序,谁该换一眼看出),不用逐个母号点
+  const panel=document.getElementById('allQuotaPanel'), tb=document.getElementById('allQuotaBody'), prog=document.getElementById('allQuotaProg');
+  panel.style.display='block'; tb.innerHTML=''; panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  const consoles=(_allConsoles||[]).map(c=>c.admin_email||c.name).filter(Boolean);
+  const all=[]; let done=0, idx=0, lastRender=0; const CONC=6;
+  function maybeRender(force){ const t=Date.now(); if(force||t-lastRender>400){ lastRender=t; _renderAllQuota(all,tb); } }
+  async function worker(){
+    while(idx<consoles.length){
+      const sel=consoles[idx++];
+      let r=null;
+      for(let _t=0;_t<2;_t++){ try{ r=await api('/api/console/quota','POST',{console:sel}); if(r&&r.ok) break; r=null; }catch(e){ r=null; } }
+      if(r&&r.ok){ (r.quotas||[]).forEach(q=>{q._console=sel; all.push(q);}); }
+      else if(typeof appendLog==='function'){ appendLog('[额度] 母号 '+sel+' 查询失败、本轮漏掉(9个子号未计入),可再点【🔄刷新所有额度】'); }
+      done++; prog.textContent=`查询中 ${done}/${consoles.length} 母号…(已得 ${all.length} 子号)`; maybeRender(false);
+    }
+  }
+  await Promise.all(Array.from({length:CONC},function(){return worker();}));
+  maybeRender(true);
+  window._quotaShown=true;
+  try{ localStorage.setItem('ff_quota_cache', JSON.stringify({ts:Date.now(), data:all})); }catch(e){}
+  prog.textContent=`✅ 完成:${all.length} 个子号 · 按可用积分升序(红=死号,橙=无额度,越靠前越该换)`;
+  try{ if(typeof loadProbe3pStat==='function') loadProbe3pStat(true); }catch(e){}  // 带上3P探测标记
+  try{ if(typeof loadProbe408Stat==='function') loadProbe408Stat(); }catch(e){}  // 带上真实408探测标记
+}
+function _applyQuotaFilter(){
+  const e=document.getElementById('quotaSearch'); const raw=(e?e.value:'').trim().toLowerCase();
+  const tb=document.getElementById('allQuotaBody'); if(!tb) return;
+  const keys=raw.split(/[\s,;，；\n\t]+/).filter(Boolean);   // 多号:空格/逗号/分号/换行分隔,任一命中即显示
+  let shown=0;
+  tb.querySelectorAll('tr').forEach(function(tr){
+    const txt=tr.textContent.toLowerCase();
+    const hit=!keys.length || keys.some(function(k){return txt.includes(k);});
+    tr.style.display=hit?'':'none'; if(hit) shown++;
+  });
+  const pe=document.getElementById('quotaFilterCount'); if(pe) pe.textContent=keys.length?('匹配 '+shown+' 个'+(keys.length>1?(' / '+keys.length+' 个关键词'):'')):'';
+}
+function _probeBadge(email){
+  const k=(email||'').toLowerCase();
+  let out='';
+  const m=window._probe3p && window._probe3p[k];
+  if(m){
+    out += m.ok
+      ? ' <span style="background:#12361c;color:#3fb950;font-size:10px;padding:1px 5px;border-radius:6px" title="3P探测可用('+m.state+')">🧪可用</span>'
+      : ' <span style="background:#3a1212;color:#f85149;font-size:10px;padding:1px 5px;border-radius:6px" title="3P探不通,将被换掉:'+m.state+'">🧪不可用</span>';
+  }
+  const m4=window._probe408 && window._probe408[k];
+  if(m4){
+    out += m4.ok
+      ? ' <span style="background:#0d2a4a;color:#58a6ff;font-size:10px;padding:1px 5px;border-radius:6px" title="真实408探测:能出图('+m4.state+')">🎯200</span>'
+      : ' <span style="background:#3a1212;color:#f85149;font-size:10px;padding:1px 5px;border-radius:6px" title="真实408探测:'+m4.state+'">🎯'+(m4.state.indexOf("408")>=0?"408":(m4.state.indexOf("403")>=0?"403":"×"))+'</span>';
+  }
+  return out;
+}
+function _renderAllQuota(all,tb){
+  window.__lastQuota=all;
+  const sorted=[...all].sort((a,b)=>{
+    const av=a.token_ok?(a.available==null?9e9:a.available):-1;
+    const bv=b.token_ok?(b.available==null?9e9:b.available):-1;
+    return av-bv;
+  });
+  tb.innerHTML=sorted.map(q=>{
+    const dead=!q.token_ok, unknown=q.token_ok&&q.available==null, low=q.token_ok&&q.available!=null&&q.available<=0;
+    const color=dead?'#ff6b6b':(unknown?'#9aa4af':(low?'#ffa94d':'#c9d1d9'));
+    const av=(q.available==null)?'—':q.available, tt=(q.total==null)?'—':q.total;
+    const st=dead?'死号/失效':(unknown?'积分未知(重查)':(low?'⚠️无额度':'正常'));
+    const aa=(q.available==null)?'':q.available;
+    return `<tr style="color:${color}"><td style="padding:3px 8px"><input type="checkbox" class="qChk" data-email="${q.email}" data-console="${q._console||''}" data-avail="${aa}" data-dead="${dead?1:0}"></td><td style="padding:3px 10px">${q.email}${(window._exportedEmails&&window._exportedEmails.has((q.email||'').toLowerCase()))?' <span style="background:#3a2d12;color:#e3b341;font-size:10px;padding:1px 5px;border-radius:6px">已售</span>':''}${_probeBadge(q.email)}</td><td style="padding:3px 10px" class="muted">${q._console||''}</td><td style="padding:3px 10px;text-align:right;font-weight:600">${av}/${tt}</td><td style="padding:3px 10px">${st}</td><td style="padding:3px 10px"><button class="sm quotaOneBtn" data-email="${q.email}" data-console="${q._console||''}" title="单独刷新这个号(带直连兜底,核实真假死)">🔄</button> <button class="sm primary swapBtn" data-email="${q.email}" data-console="${q._console||''}">换号</button> <button class="sm childDelBtn" data-email="${q.email}" data-console="${q._console||''}" title="从本地清单删掉这个号(死号/幽灵号、换号删不掉的,不碰Adobe)" style="background:#5a1d1d;border-color:#7a2a2a">🗑</button></td></tr>`;
+  }).join('');
+  _updateQSel();
+  _applyQuotaFilter();
+}
+async function loadConsoles(){
+  const d = await api('/api/consoles');
+  $('#cfgProxy').value=d.proxy||''; $('#cfgSeats').value=d.target_seats_per_console||9;
+  $('#consoleCountTag').textContent = `母号 ${(d.consoles||[]).length} 个`;
+  $('#consoleGroupTag').textContent = `分组：${_groupSummary(d.consoles||[])}`;
+  _allConsoles = d.consoles || [];
+  setTimeout(function(){ var ab=document.querySelector('.tabbar button[data-tabbtn="subconsole"]'); if(ab && ab.classList.contains('active')) _ensureQuotaShown(); }, 50);
+  _renderGroupOptions(d.groups || []);
+  const filter = $('#groupFilter').value;
+  const list = filter ? _allConsoles.filter(c=>_consoleGroup(c)===filter) : _allConsoles;
+  const tb=$('#consoleTable tbody'); tb.innerHTML='';
+  for(const c of list){
+    const tr=document.createElement('tr');
+    const sel = c.admin_email || c.name;
+    tr.innerHTML=`<td><input type="checkbox" class="consoleChk" data-sel="${sel}"></td><td>${c.name||''}</td><td>${c.admin_email||''}</td>
+      <td><input class="groupInp" data-sel="${sel}" type="text" value="${c.group||''}" placeholder="未分组" style="width:86px"></td>
+      <td>${c.has_password?'🔑':'—'}${c.has_token?'📧':''}</td>
+      <td>${c.seeded?'<span class="tag success nowrap">已播种</span>':'<span class="tag failed nowrap">未播种</span>'}</td>
+      <td><input class="seatInp" data-sel="${sel}" type="number" min="0" value="${(c.seats!==''&&c.seats!=null)?c.seats:''}" placeholder="自动" title="留空=用全局每台席位；登录母号会自动填(总席位−管理员)" style="width:60px"></td>
+      <td>${c.child_count||0}</td>
+      <td class="ops">
+        <button class="sm" data-act="open_admin" data-sel="${sel}" title="用已登录session直接打开Adobe母号管理页,看母号状态/是否被封" style="background:#16324a;border-color:#1f4d70">🌐 打开母号页</button>
+        <button class="sm" data-act="seed" data-sel="${sel}">手动登录</button>
+        <button class="sm" data-act="jil_test" data-sel="${sel}">登录母号</button>
+        <button class="sm" data-act="jil_refresh" data-sel="${sel}">刷新Token</button>
+        <button class="sm" data-act="jil_dry" data-sel="${sel}">扫描子号</button>
+        <button class="sm warn" data-act="jil_run" data-sel="${sel}">删加子号</button>
+        <button class="sm primary" data-act="extract_console" data-sel="${sel}">导出子号CK</button>
+        <button class="sm" data-act="quota" data-sel="${sel}">📊额度</button>
+        <button class="sm danger" data-act="del" data-sel="${sel}">🗑删除</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('input.seatInp').forEach(inp=>{
+    inp.onchange=async()=>{
+      const r=await api('/api/consoles/set_seats','POST',{console:inp.dataset.sel, seats:inp.value});
+      if(!r.ok){ alert(r.msg); return; }
+      appendLog(`[席位] ${inp.dataset.sel} 子号目标 = ${inp.value!==''?inp.value:'自动(全局每台席位)'}`);
+    };
+  });
+  tb.querySelectorAll('input.groupInp').forEach(inp=>{
+    inp.onchange=async()=>{
+      const r=await api('/api/consoles/set_group','POST',{console:inp.dataset.sel, group:inp.value});
+      if(!r.ok){ alert(r.msg); return; }
+      appendLog(`[分组] ${inp.dataset.sel} = ${inp.value||'未分组'}`);
+      loadConsoles(); loadRaw(); loadPushConfig();
+    };
+  });
+  tb.querySelectorAll('button[data-act]').forEach(b=>{
+    b.onclick=async()=>{
+      const sel=b.dataset.sel, act=b.dataset.act;
+      if(act==='quota'){ await showConsoleQuota(sel, b); return; }
+      if(act==='jil_test'){
+        if(!confirm(`【${sel}】登录母号并自动提取 产品地址/org/product/token？\n（有头浏览器，方便看；已播种则复用 session，未播种用 账密+refresh_token 自动登录）`)) return;
+        const r=await api('/api/admin/login_discover','POST',{console:sel, headed:true});
+        if(r.ok) appendLog(`[登录母号] ${sel} 已开始：登录并提取 org/product/users地址/token，看下方日志；完成后即可"扫描子号/删加子号"`);
+        else alert('启动失败：'+r.msg);
+      }
+      else if(act==='jil_refresh'){
+        b.textContent='刷新中…'; b.disabled=true;
+        const r=await api('/api/admin/jil_refresh','POST',{console:sel});
+        b.textContent='刷新Token'; b.disabled=false;
+        if(!r.ok) alert(r.msg);
+        else appendLog(`[刷新Token] ${sel} 已用已播种 session 抓新 Bearer，看日志确认；完后点"登录母号"验证`);
+      }
+      else if(act==='del'){
+        if(!confirm(`确定删除母号【${sel}】？(只从配置移除，不影响已加入团队的子号)`)) return;
+        const r=await api('/api/consoles/delete','POST',{console:sel});
+        if(r.ok){ appendLog(`[删除母号] ${sel} ${r.msg}`); loadConsoles(); }
+        else alert(r.msg);
+      }
+      else if(act==='jil_dry'){ const r=await api('/api/admin/jil','POST',{console:sel, dry_run:true}); flash(r); }
+      else if(act==='jil_run'){
+        if(!_confirmPoolCapacity([sel], `【${sel}】删加子号`)) return;
+        if(!confirm(`确定对【${sel}】删非管理员子号 + 从邮箱池加新子号？母号(管理员)保留`)) return;
+        const r=await api('/api/admin/jil','POST',{console:sel, dry_run:false}); flash(r);
+      }
+      else if(act==='extract_console'){
+        if(!confirm(`导出【${sel}】当前子号 CK？`)) return;
+        const r=await api('/api/extract/console','POST',{console:sel, workers:parseInt($('#extWorkers').value||'1'), headless:$('#extHeadless').checked});
+        if(r.ok) appendLog(`[导出子号CK] ${sel} 已开始：${r.count||0} 个当前子号`);
+        else alert(r.msg);
+      }
+      else if(act==='umapi_test'){
+        b.textContent='测试中…'; b.disabled=true;
+        const r=await api('/api/admin/umapi_test','POST',{console:sel});
+        b.textContent='测UMAPI'; b.disabled=false;
+        if(r.ok){ appendLog(`[UMAPI测试] ${sel} org=${r.org_id} 连接OK，product profiles:`);
+          (r.profiles||[]).forEach(p=>appendLog(`   - "${p.name}"  product=${p.productName||''} type=${p.type||''} members=${p.memberCount||''}`));
+          alert('连接OK！product profiles 已打印到日志，把含 Creative Cloud Pro 的那个名字填到该管理员的 product_profile（不填会自动猜）'); }
+        else alert('UMAPI 连接失败：'+r.msg);
+      }
+      else if(act==='umapi_dry'){ const r=await api('/api/admin/umapi','POST',{console:sel, dry_run:true}); flash(r); }
+      else if(act==='umapi_run'){
+        if(!confirm(`确定对【${sel}】走 UMAPI：删非管理员 + 加邮箱池小号？(管理员保留)`)) return;
+        const r=await api('/api/admin/umapi','POST',{console:sel, dry_run:false}); flash(r);
+      }
+      else if(act==='open_admin'){ const r=await api('/api/console/open_admin','POST',{console:sel}); flash(r); }
+      else if(act==='seed'){ const r=await api('/api/admin/seed','POST',{console:sel}); flash(r); }
+      else if(act==='autologin'){ const r=await api('/api/admin/login','POST',{console:sel}); flash(r); }
+    };
+  });
+}
+function flash(r){ if(!r.ok) alert(r.msg); }
+$('#btnCfgSave').onclick=async()=>{
+  await api('/api/consoles/save','POST',{proxy:$('#cfgProxy').value, target_seats_per_console:parseInt($('#cfgSeats').value||'9')});
+  alert('已保存'); loadConsoles();
+};
+$('#btnAddConsole').onclick=()=>{ const f=$('#addConsoleForm'); f.style.display=(f.style.display==='none'?'block':'none'); };
+$('#groupFilter').onchange=()=>{ $('#chkAllConsoles').checked=false; loadConsoles(); };
+$('#chkAllConsoles').onclick=(e)=>{ document.querySelectorAll('.consoleChk').forEach(c=>c.checked=e.target.checked); };
+function _checkedConsoles(){ return [...document.querySelectorAll('.consoleChk:checked')].map(x=>x.dataset.sel); }
+async function jilBatch(dry){
+  const w=parseInt($('#loginWorkers').value||'3');
+  const sel=_selectedOrVisibleConsoles();
+  const checked=_checkedConsoles();
+  const group=$('#groupFilter').value;
+  const scope=checked.length?`勾选的 ${checked.length} 个`:(group?`${group} 分组 ${sel.length} 个`:'全部母号');
+  if(!dry && !_confirmPoolCapacity(sel, `批量删加【${scope}】`)) return;
+  if(!confirm(`${dry?'扫描':'删非管理员子号 + 加新子号'}【${scope}】(并发=${w}，完一个补一个)？${dry?'(只看不动)':'\\n母号保留，绝不动管理员。'}`)) return;
+  const r=await api('/api/admin/jil','POST',{dry_run:dry, consoles:sel, workers:w});
+  if(r.ok) appendLog(`[${dry?'批量扫描':'批量删加'}] 已开始：${scope}，并发${w}`); else alert(r.msg);
+}
+$('#btnScanAll').onclick=()=>jilBatch(true);
+$('#btnRunAll').onclick=()=>jilBatch(false);
+$('#btnExtractSelected').onclick=async()=>{
+  const sel=_selectedOrVisibleConsoles();
+  if(!sel.length){ alert('没有可导出的母号'); return; }
+  const checked=_checkedConsoles();
+  const group=$('#groupFilter').value;
+  const scope=checked.length?`勾选的 ${checked.length} 个`:(group?`${group} 分组 ${sel.length} 个`:`当前列表 ${sel.length} 个`);
+  const workers=parseInt($('#extWorkers').value||'1');
+  const headless=$('#extHeadless').checked;
+  if(!confirm(`导出${scope}母号当前子号 CK？\n并发=${workers}，${headless?'无头':'有头'}`)) return;
+  const r=await api('/api/extract/consoles','POST',{consoles:sel, workers, headless});
+  if(r.ok) appendLog(`[导出选中母号子号CK] 已开始：${sel.length} 个母号，共 ${r.count||0} 个当前子号`);
+  else alert(r.msg);
+};
+$('#btnDelSelected').onclick=async()=>{
+  const sels=_checkedConsoles();
+  if(!sels.length){ alert('请先勾选要删除的母号'); return; }
+  if(!confirm(`确定删除勾选的 ${sels.length} 个母号？\n(只从配置移除，不影响已加入团队的子号)`)) return;
+  const r=await api('/api/consoles/delete','POST',{consoles:sels});
+  if(r.ok||r.removed){ appendLog(`[批量删除母号] ${r.msg}`); loadConsoles(); }
+  else alert(r.msg||'删除失败');
+};
+$('#btnLoginAll').onclick=async()=>{
+  const w=parseInt($('#loginWorkers').value||'3');
+  const headed=$('#loginHeaded').checked;
+  const checked=[...document.querySelectorAll('.consoleChk:checked')].map(x=>x.dataset.sel);
+  const group=$('#groupFilter').value;
+  const sel=checked.length ? checked : (group ? _visibleConsoles() : []);
+  const scope=checked.length? `勾选的 ${checked.length} 个`:(group?`${group} 分组 ${sel.length} 个`:'全部(未完成的)');
+  if(!confirm(`并发登录【${scope}】母号 (workers=${w}, ${headed?'有头·看过程':'无头·更快'})？\n并发=同时 ${w} 个，完一个补一个，直到全部完成。${sel.length?'':'\\n(没勾选=自动跳过已完成的，只跑没搞定的)'}`)) return;
+  const r=await api('/api/admin/login_discover','POST',{workers:w, headed, consoles:sel});
+  if(r.ok) appendLog(`[登录母号] 已开始：${scope}，workers=${w} ${headed?'有头':'无头'}，看日志；完成后自动刷新列表`);
+  else alert('启动失败：'+r.msg);
+};
+$('#btnAddConsoleCancel').onclick=()=>{ $('#addConsoleForm').style.display='none'; };
+$('#btnAddConsoleSave').onclick=async()=>{
+  const text=$('#ncBulk').value.trim();
+  if(!text){ alert('粘贴至少一行母号账号'); return; }
+  const r=await api('/api/consoles/add_bulk','POST',{text, group:$('#ncGroup').value.trim()});
+  if(!r.ok){ alert(r.msg||'导入失败'); return; }
+  appendLog('[导入母号] '+r.msg+(r.added&&r.added.length?'：'+r.added.join(', '):''));
+  alert(r.msg+'\n下一步：对每个新母号点【登录母号】自动提取产品地址/token');
+  $('#ncBulk').value=''; $('#addConsoleForm').style.display='none'; loadConsoles(); loadRaw();
+};
+async function loadRaw(){ const d=await api('/api/consoles/raw'); $('#cfgRaw').value=JSON.stringify(d,null,2); }
+$('#btnRawSave').onclick=async()=>{
+  let obj; try{ obj=JSON.parse($('#cfgRaw').value); }catch(e){ alert('JSON 格式错误: '+e); return; }
+  await api('/api/consoles/save','POST',obj); alert('已保存整个配置'); loadConsoles();
+};
+
+// ---- 导出 Cookie ----
+$('#btnExtract').onclick=async()=>{
+  const selected = ($('#extFile').value==='__current_children_all__' && $('#groupFilter').value) ? _visibleConsoles() : [];
+  const r=await api('/api/extract/run','POST',{accounts:$('#extFile').value, workers:parseInt($('#extWorkers').value||'1'), headless:$('#extHeadless').checked, consoles:selected});
+  flash(r);
+};
+$('#btnExtractStop').onclick=async()=>{ const r=await api('/api/task/stop','POST'); appendLog(r.ok?'[已请求停止任务]':'[当前无运行任务]'); };
+$('#btnClearCookies').onclick=async()=>{
+  if(!confirm('确定清空已导 cookie 库？\nfirefly_adobe2api_cookies.json 会清空、已导Cookie归0。\n(导到外部系统后用；清空后这些号可重新导出)')) return;
+  const r=await api('/api/cookie/clear','POST',{});
+  if(r.ok){ appendLog('[cookie库] '+r.msg); loadCounts(); }
+  else alert('清空失败：'+r.msg);
+};
+// 导出区状态跟随任务
+setInterval(async()=>{ try{ const s=await api('/api/task/status'); const e=$('#extState'); if(e) e.textContent = s.running? ('运行中: '+s.name) : ''; }catch(_){}}, 2000);
+
+// ---- 推送 API ----
+function _fmtTime(ts){
+  if(!ts) return '';
+  const d=new Date(ts*1000);
+  return d.toLocaleString();
+}
+function _pushStatusTag(s){
+  const cls = s==='accepted' ? 'success' : (s==='failed' ? 'failed' : 'in_use');
+  return `<span class="tag ${cls}">${s||''}</span>`;
+}
+async function loadPushConfig(){
+  const c=await api('/api/push/config');
+  _pushConfig = c;
+  renderPushConfig();
+}
+function renderPushConfig(){
+  const c=_pushConfig || {};
+  const group=$('#pushGroup').value;
+  const item = group ? ((c.groups||{})[group] || {account_type:'普通号'}) : c;
+  $('#pushUrl').value=item.api_url||'';
+  $('#pushType').value=item.account_type||'普通号';
+  $('#pushEnabled').checked=!!item.enabled;
+  $('#pushKey').value=item.api_key||'';
+  $('#pushState').textContent=item.api_key_set?'✅ Key已保存':'⚠️ 未设置Key';
+}
+async function loadPushRecords(){
+  const d=await api('/api/push/records?limit=200');
+  const rows=d.records||[];
+  $('#pushTable tbody').innerHTML = rows.map(r=>
+    `<tr><td>${_fmtTime(r.ts)}</td><td>${r.group||'默认'}</td><td>${r.console||''}</td><td>${r.actual_count||0}/${r.expected_count||0}</td><td>${_pushStatusTag(r.status)}</td><td>${r.http_status||''}</td><td class="muted">${r.job_id||''}</td><td class="muted">${r.error||''}</td></tr>`
+  ).join('');
+}
+$('#btnPushSave').onclick=async()=>{
+  const body={group:$('#pushGroup').value, enabled:$('#pushEnabled').checked, api_url:$('#pushUrl').value, api_key:$('#pushKey').value, account_type:$('#pushType').value};
+  const r=await api('/api/push/config','POST',body);
+  if(r.ok){ await loadPushConfig(); appendLog(`[推送API] ${body.group||'默认'} 配置已保存`); }
+  else alert(r.msg||'保存失败');
+};
+$('#pushGroup').onchange=renderPushConfig;
+$('#btnPushRefresh').onclick=loadPushRecords;
+$('#btnPushClear').onclick=async()=>{
+  if(!confirm('确定清空推送记录？')) return;
+  const r=await api('/api/push/records/clear','POST',{});
+  if(r.ok) loadPushRecords();
+};
+setInterval(loadPushRecords, 5000);
+
+// 初始加载
+loadCounts(); loadPool(); loadConsoles(); loadRaw(); loadPushConfig(); loadPushRecords();
+(function(){
+  var rf=document.getElementById('btnAllQuotaRefresh'); if(rf) rf.onclick=loadAllQuota;
+  var all=document.getElementById('qAll'); if(all) all.onchange=function(){ document.querySelectorAll('.qChk').forEach(function(c){c.checked=all.checked;}); _updateQSel(); };
+  var lo=document.getElementById('btnSelLow'); if(lo) lo.onclick=function(){
+    var th=parseFloat((document.getElementById('quotaThresh')||{}).value)||100;
+    document.querySelectorAll('.qChk').forEach(function(c){
+      var dead=c.dataset.dead==='1'; var av=(c.dataset.avail==='')?null:parseFloat(c.dataset.avail);
+      c.checked = dead || (av!=null && av<th);
+    });
+    _updateQSel();
+  };
+  var sw=document.getElementById('btnSwapSel'); if(sw) sw.onclick=function(){ doSwap(_collectSwaps(), false); };
+  var sd=document.getElementById('btnSwapDry'); if(sd) sd.onclick=function(){ doSwap(_collectSwaps(), true); };
+  var as=document.getElementById('btnAutoSwap'); if(as) as.onclick=function(){
+    var th=parseInt((document.getElementById('quotaThresh')||{}).value)||100;
+    if(!confirm('🤖 全自动换号:扫所有子号,把【可用积分 <'+th+' 分】的全部换掉\n(删旧+池里加新+等权益+导出新号CK+只推新号进adobe),会真改Adobe团队+推adobe,后台跑。确定?')) return;
+    api('/api/console/autoswap','POST',{threshold:th, workers:3, export_delay:90}).then(function(r){
+      if(r&&r.ok) appendLog('[全自动换号] 已开始(换<'+th+'分),看下方实时日志;完成后点🔄刷新所有额度');
+      else alert((r&&r.msg)||'启动失败');
+    });
+  };
+  var pi=document.getElementById('btnProtoImport'); if(pi) pi.onclick=function(){
+    var c=((document.getElementById('pfConsole')||{}).value||'').trim();
+    if(!c){ alert('填母号 admin_email'); return; }
+    var lim=parseInt((document.getElementById('pfLimit')||{}).value)||0;
+    var push=!!(document.getElementById('pfPush')||{}).checked;
+    if(!confirm('🚀 协议全流程导入(纯HTTP零浏览器):\n母号['+c+']协议登录 → JIL列真团队子号 → 协议导出cookie('+(lim?'前'+lim+'个':'全量')+') → '+(push?'推adobe2api':'不推')+'\n\n会真登录母号+子号(发邮箱码)'+(push?'、推进生产adobe2api':'')+',后台跑。确定?')) return;
+    api('/api/console/protocol_import','POST',{console:c, limit:lim, push:push, check_credits:true, workers:3}).then(function(r){
+      if(r&&r.ok) appendLog('[协议全流程] 已开始('+c+'),看实时日志:母号登录→列子号→导cookie→'+(push?'推adobe':'(不推)'));
+      else alert((r&&r.msg)||'启动失败');
+    });
+  };
+})();
+function _collectSwaps(){
+  var sel=[].slice.call(document.querySelectorAll('.qChk:checked'));
+  var by={}; sel.forEach(function(c){ var m=c.dataset.console; (by[m]=by[m]||[]).push(c.dataset.email); });
+  return Object.keys(by).map(function(m){ return {console:m, old:by[m]}; });
+}
+async function _fillSeats(dry){
+  var seats=parseInt((document.getElementById('fillSeats')||{}).value)||9;
+  if(!dry && !confirm('补满所有母号到 '+seats+' 个子号?\n\n会:查每个母号 Adobe 真实席位 → 缺的从邮箱池加新号(★只加不删、不动现有号)→ 协议导新号cookie写池。\n消耗邮箱池、改 Adobe 团队,后台跑。\n\n建议先点【🔍检测缺口】看一遍再补。确定?')) return;
+  var r=await api('/api/console/fill_seats','POST',{dry_run:!!dry, seats:seats, workers:3});
+  if(r&&r.ok){ appendLog((dry?'[席位检测] ':'[席位补满] ')+'已开始,看下方实时日志'+(dry?'(只查缺口、不补)':',完成后点🔄刷新所有额度看结果')); }
+  else alert((r&&r.msg)||'启动失败');
+}
+async function _syncChildren(){
+  if(!confirm('从 Adobe 真实成员同步回本地子号清单?\n\n会:拉每个母号 Adobe 真实子号 → 跟账号库匹配账密 → 写回本地清单(修复🗑误删的真号、清单<Adobe)。\n纯本地、不碰 Adobe、不导cookie,后台跑,完成后点🔄刷新所有额度。确定?')) return;
+  var r=await api('/api/console/sync_children','POST',{workers:3});
+  if(r&&r.ok){ appendLog('[同步清单] 已开始(从Adobe拉真实成员写回本地清单),看实时日志'); }
+  else alert((r&&r.msg)||'启动失败');
+}
+async function doSwap(swaps, dry){
+  swaps=(swaps||[]).filter(function(s){return s.console && (s.old||[]).length;});
+  var total=swaps.reduce(function(a,s){return a+s.old.length;},0);
+  if(!total){ alert('没选中子号(先勾选)'); return; }
+  if(!dry && !confirm('确定【换掉 '+total+' 个子号】?\n\n会:Adobe团队踢掉这些旧子号 + 从邮箱池加等量新子号 + 导出新子号CK 进本地池(不推adobe,卖号时由导出门禁统一把关、只导企业号)。\n旧子号踢出后在adobe2api自动变死号。\n\n建议先点【🔍 dry-run选中】看一遍拟删/拟加,再实换。')) return;
+  var r=await api('/api/console/swap','POST',{swaps:swaps, then_extract:true, push:false, dry_run:!!dry, workers:3});
+  if(r&&r.ok){ appendLog((dry?'[换号·dry-run] ':'[换号] ')+'已开始('+total+'个),看下方实时日志'+(dry?'(只看不动)':',完成后点🔄刷新所有额度看结果')); }
+  else alert((r&&r.msg)||'启动失败');
+}
+async function childDel(btn){
+  const email=btn.dataset.email, cons=btn.dataset.console||'';
+  if(!confirm('从本地清单删掉【'+email+'】?\n\n仅删本地记录(子号控制台不再显示它),不碰 Adobe 团队。\n适合死号/幽灵号(换号删不掉的)。')) return;
+  const tr=btn.closest('tr'); btn.disabled=true;
+  try{
+    const r=await fetch('/api/console/child_remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email, console:cons})});
+    const j=await r.json();
+    if(j.ok){
+      if(window.__lastQuota){ window.__lastQuota=window.__lastQuota.filter(function(x){return (x.email||'').toLowerCase()!==email.toLowerCase();}); }
+      if(tr) tr.remove();
+      if(typeof appendLog==='function') appendLog('[删除子号] 本地清单已删 '+email+'(删掉'+j.removed+'个)');
+    } else { alert('删除失败: '+(j.msg||'')); btn.disabled=false; }
+  }catch(e){ alert('删除异常: '+e); btn.disabled=false; }
+}
+async function _delSelected(){
+  const items=[...document.querySelectorAll('.qChk:checked')].map(function(c){return {email:c.dataset.email, console:c.dataset.console||''};}).filter(function(x){return x.email;});
+  if(!items.length){ alert('先勾选要删的子号(可配合【☑选中低额度/死号】)'); return; }
+  if(!confirm('从本地清单删掉勾选的 '+items.length+' 个号?\n\n仅删本地记录、不碰 Adobe。适合批量清死号/幽灵号。')) return;
+  try{
+    const r=await fetch('/api/console/child_remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:items})});
+    const j=await r.json();
+    if(j.ok){
+      const rm=new Set(items.map(function(x){return x.email.toLowerCase();}));
+      if(window.__lastQuota){ window.__lastQuota=window.__lastQuota.filter(function(x){return !rm.has((x.email||'').toLowerCase());}); const tb=document.getElementById('allQuotaBody'); if(tb) _renderAllQuota(window.__lastQuota, tb); }
+      if(typeof appendLog==='function') appendLog('[删除子号] 本地清单批量删 '+j.removed+' 个');
+    } else alert('删除失败: '+(j.msg||''));
+  }catch(e){ alert('删除异常: '+e); }
+}
+async function quotaOne(btn){
+  const email=btn.dataset.email, cons=btn.dataset.console||'';
+  const tr=btn.closest('tr'); const old=btn.textContent; btn.textContent='⏳'; btn.disabled=true;
+  try{
+    const r=await fetch('/api/console/quota_one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email, console:cons})});
+    const q=await r.json();
+    if(!q.ok) throw (q.msg||'查询失败');
+    if(window.__lastQuota){ const it=window.__lastQuota.find(x=>(x.email||'').toLowerCase()===email.toLowerCase()); if(it){ it.token_ok=q.token_ok; it.available=q.available; it.total=q.total; it.reason=q.reason; } }
+    const dead=!q.token_ok, unknown=q.token_ok&&q.available==null, low=q.token_ok&&q.available!=null&&q.available<=0;
+    const color=dead?'#ff6b6b':(unknown?'#9aa4af':(low?'#ffa94d':'#c9d1d9'));
+    const av=(q.available==null)?'—':q.available, tt=(q.total==null)?'—':q.total;
+    const st=dead?'死号/失效':(unknown?'积分未知(重查)':(low?'⚠️无额度':'正常'));
+    if(tr){ tr.style.color=color; const tds=tr.querySelectorAll('td'); if(tds[3]) tds[3].textContent=av+'/'+tt; if(tds[4]) tds[4].textContent=st; }
+  }catch(e){ alert('单刷失败: '+e); }
+  finally{ btn.textContent=old; btn.disabled=false; }
+}
+function _updateQSel(){
+  document.querySelectorAll('.qChk').forEach(function(c){ c.onchange=_updateQSel; });
+  document.querySelectorAll('.quotaOneBtn').forEach(function(b){ b.onclick=function(){ quotaOne(b); }; });
+  document.querySelectorAll('.childDelBtn').forEach(function(b){ b.onclick=function(){ childDel(b); }; });
+  document.querySelectorAll('.swapBtn').forEach(function(b){ b.onclick=function(){ doSwap([{console:b.dataset.console, old:[b.dataset.email]}], false); }; });
+  var n=document.querySelectorAll('.qChk:checked').length;
+  var e=document.getElementById('qSelCount'); if(e) e.textContent=n?('已选 '+n+' 个'):'';
+}
+window._autoState=null;
+async function loadAutoLoopStatus(){
+  try{
+    var s=await api('/api/console/autoswap/status');
+    window._autoState=s;
+    var cb=document.getElementById('chkAutoLoop'); if(cb) cb.checked=!!s.enabled;
+    var iv=document.getElementById('autoInterval'); if(iv && s.interval && document.activeElement!==iv) iv.value=Math.round(s.interval/60);
+    _tickAuto();
+  }catch(e){}
+}
+function _tickAuto(){
+  var st=document.getElementById('autoLoopStatus'); if(!st) return;
+  var s=window._autoState;
+  if(!s || !s.enabled){ st.textContent=''; return; }
+  var head='🟢 定时开启('+Math.round((s.interval||600)/60)+'分/次·换<'+s.threshold+'分)';
+  if(!s.last_run){ st.textContent=head+' · 等待首轮扫描…'; return; }
+  var now=Math.floor(Date.now()/1000);
+  var remain=(s.last_run+(s.interval||600))-now;
+  if(remain>3){
+    var mm=Math.floor(remain/60), ss=remain%60;
+    st.textContent=head+' · ⏳ 下次扫描 '+mm+':'+(ss<10?'0':'')+ss+' 后';
+  }else{
+    st.textContent=head+' · 🔄 正在扫描/换号…(详情看右上角进度浮窗+实时日志)';
+  }
+}
+(function(){
+  var cb=document.getElementById('chkAutoLoop');
+  if(cb) cb.onchange=async function(){
+    var en=cb.checked;
+    var th=parseInt((document.getElementById('quotaThresh')||{}).value)||100;
+    var mins=parseInt((document.getElementById('autoInterval')||{}).value)||10;
+    if(en && !confirm('开启【定时自动换号】:每 '+mins+' 分钟自动扫一遍,把可用积分 <'+th+' 分的子号全部换掉(删旧+加新+导出+只推新号),持续后台运行直到关闭(app重启也自动续上)。\n会真改Adobe团队。确定开启?')){ cb.checked=false; return; }
+    var r=await api('/api/console/autoswap/toggle','POST',{enabled:en, threshold:th, interval:mins*60});
+    appendLog(en?('[定时换号] 已开启:每'+mins+'分钟扫一次,换<'+th+'分,持续后台'):'[定时换号] 已关闭');
+    setTimeout(loadAutoLoopStatus, 300);
+  };
+  loadAutoLoopStatus();
+  setInterval(loadAutoLoopStatus, 30000);
+  setInterval(_tickAuto, 1000);
+})();
+// ---- 导出卖号(adobe2api JSON) ----
+window._exportedEmails = window._exportedEmails || new Set();
+async function loadSellStats(){
+  try{
+    const r = await fetch('/api/sell/stats'); const j = await r.json();
+    if(!j.ok) throw 0;
+    const el = document.getElementById('sellStats');
+    if(el) el.innerHTML = '本地池 <b>'+j.pool+'</b> · 已导出 <b style="color:#d29922">'+j.exported+'</b> · 可卖 <b style="color:#3fb950">'+j.sellable+'</b>';
+    window._exportedEmails = new Set(j.exported_emails||[]);
+    const tb=document.getElementById('allQuotaBody');
+    if(tb && window.__lastQuota){ _renderAllQuota(window.__lastQuota, tb); }  // 重渲染带"已售"徽章
+  }catch(e){ const el=document.getElementById('sellStats'); if(el) el.textContent='账本加载失败'; }
+}
+(function(){
+  const bs=document.getElementById('btnSellStats'); if(bs) bs.onclick=loadSellStats;
+  const be=document.getElementById('btnSellExport'); if(be) be.onclick=async function(){
+    const lim=parseInt(document.getElementById('sellLimit').value||'0')||0;
+    be.disabled=true; const old=be.textContent; be.textContent='导出中…';
+    try{
+      const r=await fetch('/api/sell/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:lim})});
+      const cd=r.headers.get('Content-Disposition')||'';
+      if(!cd){ const j=await r.json(); alert('⚠ '+(j.msg||'导出失败')); }
+      else{
+        const blob=await r.blob(); const cnt=r.headers.get('X-Export-Count'), rem=r.headers.get('X-Export-Remain'), skip=r.headers.get('X-Export-Skipped')||'0';
+        const m=cd.match(/filename="?([^"]+)"?/); const fn=m?m[1]:'export.json';
+        const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=fn; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u);
+        alert('✅ 导出 '+cnt+' 个企业号 → '+fn+(parseInt(skip)>0?('\n⚠ 已拦下 '+skip+' 个普号(无企业积分,不卖给客户)'):'')+'\n本地池还剩未导出 '+rem+' 个'); loadSellStats();
+      }
+    }catch(e){ alert('导出异常: '+e); }
+    finally{ be.disabled=false; be.textContent=old; }
+  };
+  const bm=document.getElementById('btnSellMark'); if(bm) bm.onclick=async function(){
+    const f=document.getElementById('sellMarkFile').files[0];
+    if(!f){ alert('先选一个【已发给客户的旧导出 json】'); return; }
+    const st=document.getElementById('sellMarkState'); st.textContent='标记中(刷token认号,约30-60s)…'; bm.disabled=true;
+    try{
+      const fd=new FormData(); fd.append('file', f);
+      const r=await fetch('/api/sell/mark',{method:'POST',body:fd}); const j=await r.json();
+      if(j.ok){ st.textContent='✅ '+j.total+'个 · 认出'+j.matched+' · 新标记'+j.new+' · 未认出'+j.unmatched; loadSellStats(); }
+      else st.textContent='❌ '+(j.msg||'失败');
+    }catch(e){ st.textContent='异常: '+e; }
+    finally{ bm.disabled=false; }
+  };
+  async function _markSold(unmark){
+    const emails=[...document.querySelectorAll('.qChk:checked')].map(c=>c.dataset.email).filter(Boolean);
+    if(!emails.length){ alert('先勾选要'+(unmark?'取消已售':'标记已售')+'的子号'); return; }
+    if(!confirm((unmark?'取消已售':'标记已售')+' '+emails.length+' 个号?'+(unmark?'\n(取消后重新进可卖清单)':'\n(标记后导出会跳过、不再卖)'))) return;
+    try{
+      const r=await fetch('/api/sell/mark_emails',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails:emails, unmark:!!unmark})});
+      const j=await r.json();
+      if(!j.ok){ alert('失败: '+(j.msg||'')); return; }
+      window._exportedEmails = new Set(j.exported_emails||[]);
+      const tb=document.getElementById('allQuotaBody'); if(tb && window.__lastQuota) _renderAllQuota(window.__lastQuota, tb);  // 重渲染更新"已售"徽章
+      const el=document.getElementById('sellStats'); if(el) el.innerHTML='本地池 <b>'+j.pool+'</b> · 已导出 <b style="color:#d29922">'+j.exported+'</b> · 可卖 <b style="color:#3fb950">'+j.sellable+'</b>';
+      if(typeof appendLog==='function') appendLog('['+j.action+'] '+j.changed+' 个 · 现已售 '+j.exported+' · 可卖 '+j.sellable);
+    }catch(e){ alert('异常: '+e); }
+  }
+  const bms=document.getElementById('btnMarkSold'); if(bms) bms.onclick=function(){ _markSold(false); };
+  const bus=document.getElementById('btnUnmarkSold'); if(bus) bus.onclick=function(){ _markSold(true); };
+  const bds=document.getElementById('btnDelSel'); if(bds) bds.onclick=_delSelected;
+  // ---- 已售追踪台账 ----
+  function _renderLedger(j){
+    const box=document.getElementById('ledgerBox'); if(!box) return;
+    if(!j.ok){ box.innerHTML='<span style="color:#f85149">'+(j.msg||'加载失败')+'</span>'; return; }
+    if(!j.total_sold){ box.innerHTML='<span class="muted">台账为空——从现在起导出的号会自动记账;历史号点【回填历史已售】。</span>'; return; }
+    const wc=j.with_current; let h='<div class="muted" style="margin-bottom:6px">共 <b>'+j.total_sold+'</b> 个已售号'+(wc?' · 已查当前积分':' · (勾"查当前积分"看谁白占)')+'</div>';
+    for(const g of j.groups){
+      let unused=0; if(wc) unused=g.rows.filter(r=>r.unused).length;
+      h+='<details open style="margin-bottom:6px"><summary style="cursor:pointer;color:#58a6ff">'+g.date+' <span class="muted">('+g.count+'个'+(wc&&unused?(' · <span style="color:#f85149">'+unused+'个白占未用</span>'):'')+')</span></summary>';
+      h+='<table style="width:100%;border-collapse:collapse;margin-top:4px"><tr style="color:#8b949e;text-align:left"><th>邮箱</th><th>卖时基线</th>'+(wc?'<th>当前</th><th>已用</th><th>状态</th>':'')+'</tr>';
+      for(const r of g.rows){
+        h+='<tr style="border-top:1px solid #1d2430"><td>'+r.email+'</td><td>'+r.baseline+'</td>';
+        if(wc){
+          const cur=(r.current==null?'—':r.current), used=(r.used==null?'—':r.used);
+          const tag=r.current==null?'<span class="muted">查不出</span>':(r.unused?'<span style="color:#f85149">白占·没用</span>':'<span style="color:#3fb950">已使用</span>');
+          h+='<td>'+cur+'</td><td>'+used+'</td><td>'+tag+'</td>';
+        }
+        h+='</tr>';
+      }
+      h+='</table></details>';
+    }
+    box.innerHTML=h;
+  }
+  async function loadLedger(){
+    const st=document.getElementById('ledgerState'), box=document.getElementById('ledgerBox');
+    const cur=document.getElementById('ledgerCurrent').checked;
+    if(st) st.textContent=cur?'查当前积分中(刷token,稍慢)…':'加载中…';
+    if(box) box.innerHTML='';
+    try{
+      const r=await fetch('/api/sell/ledger'+(cur?'?current=1':'')); const j=await r.json();
+      _renderLedger(j); if(st) st.textContent='';
+    }catch(e){ if(st) st.textContent='异常: '+e; }
+  }
+  const bl=document.getElementById('btnLedger'); if(bl) bl.onclick=loadLedger;
+  window.loadLedger=loadLedger;   // 进子号控制台 tab 自动加载一次
+  const blc=document.getElementById('ledgerCurrent'); if(blc) blc.onchange=loadLedger;
+  const blb=document.getElementById('btnLedgerBackfill'); if(blb) blb.onclick=async function(){
+    if(!confirm('把历史已导出的号回填进台账?\n(日期标"历史"、基线按4000估,之后勾"查当前积分"就能看老号谁白占没用)')) return;
+    const st=document.getElementById('ledgerState'); if(st) st.textContent='回填中…'; blb.disabled=true;
+    try{
+      const r=await fetch('/api/sell/ledger/backfill',{method:'POST'}); const j=await r.json();
+      if(j.ok){ if(st) st.textContent='✅ 回填 '+j.added+' 个 · 台账共 '+j.total_sold; loadLedger(); }
+      else if(st) st.textContent='❌ '+(j.msg||'失败');
+    }catch(e){ if(st) st.textContent='异常: '+e; }
+    finally{ blb.disabled=false; }
+  };
+  // ---- 3P探测打标:探不通废号自动删池 ----
+  async function loadProbe3pStat(reRender){
+    try{
+      const r=await fetch('/api/probe3p/stats'); const j=await r.json();
+      if(!j.ok) return;
+      window._probe3p = j.marks || {};
+      const el=document.getElementById('probe3pStat');
+      if(el){
+        if(j.checked_at){
+          const d=new Date(j.checked_at*1000);
+          el.innerHTML='上次探: 可用<b style="color:#3fb950">'+j.usable_count+'</b> · 不可用<b style="color:#f85149">'+j.removed_now+'</b>'+(j.dry_run?'(dry未动)':'')+' · '+d.toLocaleString();
+        } else el.textContent='未探过';
+      }
+      if(reRender){ const tb=document.getElementById('allQuotaBody'); if(tb && window.__lastQuota) _renderAllQuota(window.__lastQuota, tb); }  // 重渲染带🧪标记
+    }catch(e){}
+  }
+  window.loadProbe3pStat=loadProbe3pStat;
+  async function _runProbe3p(dry){
+    const msg=dry
+      ? '🔍 3P探测 dry-run:只探不换,看会判出哪些不可用号、会换哪些(看下方实时日志)。确定?'
+      : '🔁 3P探测换号:探每号3P(veo cost预检·不扣积分),探不通(无权益/408/超时)的号会【按母号换掉】——踢旧子号+从邮箱池加新+导cookie进池(不推adobe,卖号交导出门禁把关)。\n\n破坏性、会真改Adobe团队,后台跑。建议先跑一次【dry-run】看会换哪些。确定?';
+    if(!confirm(msg)) return;
+    const r=await api('/api/probe3p/run','POST',{dry_run:!!dry,workers:12,action:'swap'});
+    if(r&&r.ok){ appendLog('[3P探测换号'+(dry?'·dry-run':'')+'] 已开始(每号探veo cost预检·不扣积分→不可用的按母号换号),看下方实时日志;完成后🔄刷新额度看结果'); setTimeout(function(){loadProbe3pStat(true);}, 1500); }
+    else alert((r&&r.msg)||'启动失败');
+  }
+  async function loadProbe408Stat(){
+    try{
+      const r=await fetch('/api/probe408/stats'); const j=await r.json();
+      if(!j.ok) return;
+      window._probe408 = j.marks || {};
+      const el=document.getElementById('probe408Stat');
+      if(el && j.checked_at){
+        const d=new Date(j.checked_at*1000);
+        el.textContent='上次 '+d.toLocaleString()+' · ✅200 '+(j.n200||0)+' / ❌408 '+(j.n408||0)+' / ❌403 '+(j.n403||0)+' / 共'+(j.total||0);
+      }
+    }catch(e){}
+  }
+  async function _runProbe408(){
+    if(!confirm('🎯 真实408探测:对每个有cookie的子号【真实提交一次 generate-async】,看Adobe到底返回 200(能出图)/403(org无3P权益)/408(org被风控甩)。\n\n★只检测、不换号不删号;但能出图的号会排1张图(消耗1次额度)。后台跑,看下方实时日志。确定?')) return;
+    const r=await api('/api/probe408/run','POST',{workers:5});
+    if(r&&r.ok){ appendLog('[真实408探测] 已开始(每号真实打generate-async看状态码),看下方实时日志;完成后🔄刷新子号列表看每号🎯标记'); setTimeout(function(){loadProbe408Stat();}, 1500); }
+    else alert((r&&r.msg)||'启动失败');
+  }
+  const bp3=document.getElementById('btnProbe3p'); if(bp3) bp3.onclick=function(){ _runProbe3p(false); };
+  const bp3d=document.getElementById('btnProbe3pDry'); if(bp3d) bp3d.onclick=function(){ _runProbe3p(true); };
+  const bp408=document.getElementById('btnProbe408'); if(bp408) bp408.onclick=function(){ _runProbe408(); };
+  loadProbe3pStat();
+  loadProbe408Stat();
+})();
+// ---- 页签切换(管理员控制台单独一页,不再一长条堆挤) ----
+function switchTab(name){
+  document.querySelectorAll('.tabbar button').forEach(b=>b.classList.toggle('active', b.dataset.tabbtn===name));
+  document.querySelectorAll('main > section.card[data-tab]').forEach(s=>s.classList.toggle('tab-on', s.dataset.tab===name));
+  try{ localStorage.setItem('ff_tab', name); }catch(e){}
+  // 进子号控制台自动加载一次额度(不用手点);_allConsoles 还没就绪则跳过,等手点【刷新】
+  if(name==='subconsole'){ setTimeout(_ensureQuotaShown, 60); }
+  if(name==='subconsole'||name==='exportpush'){ if(typeof loadSellStats==='function') loadSellStats(); }
+}
+document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tabbtn));
+switchTab((function(){ try{ return localStorage.getItem('ff_tab')||'overview'; }catch(e){ return 'overview'; } })());
+setInterval(()=>{ loadCounts(); }, 5000);
+</script>
+</body>
+</html>
