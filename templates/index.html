@@ -255,6 +255,7 @@
     <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px">
       <span id="sellStats" class="muted">点【刷新账本】</span>
       <button id="btnSellStats" class="sm">🔄 刷新账本</button>
+      <button id="btnSellPurge" class="sm warn" title="实时验证'可卖'那批,清掉确实死掉的号(积分0/cookie失效);429/查不出的一律保留不误删。让'可卖'计数变真实">🧹 清死号</button>
       <span style="margin-left:auto"></span>
       <label>数量 <input id="sellLimit" type="number" value="50" min="0" style="width:72px"> 个(0=全部未导出)</label>
       <button id="btnSellExport" class="primary">📥 导出并下载</button>
@@ -1208,6 +1209,17 @@ async function loadSellStats(){
 }
 (function(){
   const bs=document.getElementById('btnSellStats'); if(bs) bs.onclick=loadSellStats;
+  const bp=document.getElementById('btnSellPurge'); if(bp) bp.onclick=async function(){
+    if(!confirm('清死号:实时验证"可卖"那批号,清掉确实死掉的(积分0/cookie失效)。\n429/查不出的一律保留、不会误删活号。确定?')) return;
+    bp.disabled=true; const old=bp.textContent; bp.textContent='验证中…';
+    try{
+      const r=await fetch('/api/sell/purge_dead',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      const j=await r.json();
+      if(j.ok){ appendLog(`[清死号] ${j.msg}`); loadSellStats(); }
+      else alert(j.msg||'清死号失败');
+    }catch(e){ alert('清死号异常:'+e); }
+    finally{ bp.disabled=false; bp.textContent=old; }
+  };
   const be=document.getElementById('btnSellExport'); if(be) be.onclick=async function(){
     const lim=parseInt(document.getElementById('sellLimit').value||'0')||0;
     be.disabled=true; const old=be.textContent; be.textContent='导出中…';

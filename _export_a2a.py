@@ -63,6 +63,46 @@ def _remaining(entries, done):
                if str(e.get("name") or "").strip() and str(e.get("name") or "").strip().lower() not in done)
 
 
+def purge_dead(min_total=1000, workers=6, only_unexported=True, log=print):
+    """实时验证本地 cookie 池,移除【确实死掉】的号(积分0 / invalid_credentials / cookie_dead)。
+    ★429/超时/查不出 一律【保留】(可能只是限流,别误删活号)。only_unexported=True 只验"可卖"那批(快、够修可卖计数);
+    False 验全池(慢,清历史已售死号缩池)。返回 {checked, removed, kept, dead}。"""
+    import _quota
+    import concurrent.futures as cf
+    entries = fry._load_adobe2api_cookie_entries()
+    exported = load_exported() if only_unexported else set()
+
+    def _chk(e):
+        nm = str(e.get("name") or "").strip()
+        ck = e.get("cookie") or ""
+        if not nm or not ck:
+            return e, "keep"                       # 空的不动
+        if only_unexported and nm.lower() in exported:
+            return e, "keep"                       # 只验可卖那批,已导出的不查(省请求)
+        try:
+            q = _quota.query_quota(ck)
+        except Exception:
+            return e, "keep"                       # 查询异常=可能限流,保留
+        reason = str(q.get("reason") or "")
+        tot = q.get("total")
+        if "invalid_credentials" in reason or "cookie_dead" in reason:
+            return e, "dead"                        # cookie 失效=真死
+        if isinstance(tot, (int, float)) and tot <= 0:
+            return e, "dead"                        # 积分归0=权益没了=真死
+        return e, "keep"                            # 活的 / 查不出的 都保留
+    keep, dead = [], []
+    with cf.ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        for e, verdict in ex.map(_chk, entries):
+            (dead if verdict == "dead" else keep).append(e)
+    dead_names = [str(e.get("name") or "") for e in dead]
+    if dead:
+        fry._write_adobe2api_cookie_entries(keep)
+        log("[清死号] 清掉 %d 个死号,池 %d → %d" % (len(dead), len(entries), len(keep)))
+    else:
+        log("[清死号] 没有确实死掉的号(429/查不出的都保留了)")
+    return {"checked": len(entries), "removed": len(dead), "kept": len(keep), "dead": dead_names}
+
+
 def sell_stats():
     """账本:本地池有cookie数 / 已导出数 / 可卖数 / 已导出email集合(前端子号控制台标'已售')。"""
     entries = fry._load_adobe2api_cookie_entries()

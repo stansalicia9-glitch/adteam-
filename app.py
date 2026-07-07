@@ -1045,6 +1045,22 @@ def api_sell_export():
     return resp
 
 
+@app.route("/api/sell/purge_dead", methods=["POST"])
+def api_sell_purge_dead():
+    """清死号:实时验证本地cookie池,移除确实死掉的号(积分0/invalid);429/查不出的一律保留(防误删)。
+    默认只验"可卖"那批(快,修正可卖计数);?full=1 验全池(慢,清历史已售死号缩池)。"""
+    import _export_a2a
+    body = request.get_json(force=True, silent=True) or {}
+    full = bool(body.get("full"))
+    try:
+        r = _export_a2a.purge_dead(only_unexported=(not full), workers=5, log=TASK._emit)
+        return jsonify({"ok": True, "removed": r["removed"], "checked": r["checked"],
+                        "msg": f"清掉 {r['removed']} 个死号(查了{r['checked']}个,429/查不出的保留)",
+                        **_export_a2a.sell_stats()})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)[:160]})
+
+
 @app.route("/api/sell/ledger")
 def api_sell_ledger():
     """已售追踪台账:按卖出日期分组(日期+卖时基线);?current=1 时并发查当前积分算"已用/是否未用"(慢)。"""
