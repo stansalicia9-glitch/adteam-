@@ -35,14 +35,14 @@ def main():
     ap.add_argument("--accounts", required=True)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--proxy", default="")
-    ap.add_argument("--retry-rounds", type=int, default=3, help="失败号重试轮数(等Firefly权益传播/429冷却;刚加的子号第一次多半没传播)")
-    ap.add_argument("--retry-wait", type=int, default=75, help="每轮之间等待秒数")
+    ap.add_argument("--retry-rounds", type=int, default=2, help="失败号重试轮数(等Firefly权益传播/429冷却;别太多轮,反复重试被限流号=火上浇油)")
+    ap.add_argument("--retry-wait", type=int, default=180, help="每轮之间等待秒数(429账号级限流要几分钟才冷却,75s太短)")
     args, _ignored = ap.parse_known_args()  # 忽略浏览器版独有参数
 
     base_proxy = (args.proxy or "").strip() or None              # 显式 --proxy 优先(给就全用它)
     use_resi = bool(network_proxy._residential_tpl()) and not base_proxy  # 配了住宅模板且没显式proxy → 每子号不同住宅IP
-    # ★限并发≤4:防"一个 org 几百成员短时间同 IP 批量登录"被当账号农场
-    workers = max(1, min(int(args.workers or 3), 4))
+    # ★限并发≤3:防"短时间大量登录"触发 Adobe 账号级 429 限流(实测隔离单测必过、并发burst才429)
+    workers = max(1, min(int(args.workers or 2), 3))
     accts = []
     with open(args.accounts, encoding="utf-8-sig") as f:
         for line in f:
@@ -60,7 +60,7 @@ def main():
         if not a.get("password"):
             print(f"  [{em}] ❌ 没密码,跳过", flush=True)
             return a, ""
-        time.sleep(random.uniform(0.4, 2.2))                     # ★错峰:别一秒一堆同时登录,分散登录时间(拟人)
+        time.sleep(random.uniform(1.5, 5.0))                     # ★错峰加大:别一秒一堆同时登录,分散burst防429(429比慢一点更伤)
         pxy = network_proxy.proxy_for_id(em) if use_resi else (base_proxy or network_proxy.configured_proxy() or None)
         try:
             ck = alp.sub_login_cookie(a, proxy=pxy)
