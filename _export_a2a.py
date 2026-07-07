@@ -93,7 +93,7 @@ def do_export(limit=0, re_export=False, min_total=1000, workers=16):
     # —— 企业门禁:并发查积分,只放行 total>=min_total,普号拦下不导 ——
     import _quota
     import concurrent.futures as cf
-    pending = []      # (em, ck, total)
+    pending = []      # (em, ck, total, available)
     personal = []     # 被拦的普号 email(积分<阈值/查不出)
     if cands:
         def _chk(item):
@@ -102,23 +102,29 @@ def do_export(limit=0, re_export=False, min_total=1000, workers=16):
                 q = _quota.query_quota(ck)
             except Exception:
                 q = {}
-            return em, ck, (q.get("total") or 0)
+            tot = q.get("total") or 0
+            av = q.get("available")
+            av = av if isinstance(av, (int, float)) else tot   # 查不出available就退回total当基线
+            return em, ck, tot, av
         with cf.ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-            for em, ck, tot in ex.map(_chk, cands):
-                (pending if tot >= min_total else personal).append(
-                    (em, ck, tot) if tot >= min_total else em)
+            for em, ck, tot, av in ex.map(_chk, cands):
+                if tot >= min_total:
+                    pending.append((em, ck, tot, av))
+                else:
+                    personal.append(em)
     if not pending:
         return None, {"exported_at": int(time.time()), "total": 0, "items": []}, _remaining(entries, exported), len(personal)
     out = {"exported_at": int(time.time()), "total": len(pending),
-           "items": [{"id": uuid.uuid4().hex[:8], "name": em, "cookie": ck} for em, ck, _t in pending]}
+           "items": [{"id": uuid.uuid4().hex[:8], "name": em, "cookie": ck} for em, ck, _t, _a in pending]}
     fname = "refresh-cookies-export-%s.json" % time.strftime("%Y%m%d-%H%M%S")
     with open(os.path.join(BASE, fname), "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
     with open(EXPORTED_FILE, "a", encoding="utf-8") as f:
-        for em, _ck, _t in pending:
+        for em, _ck, _t, _a in pending:
             f.write(em.lower() + "\n")
-    record_sold([(em, tot) for em, _ck, tot in pending])   # ★记卖出日期+卖时基线积分
-    done = exported | {em.lower() for em, _, _ in pending}
+    # ★基线记【卖时available】而非total(封顶):已内部消耗过的号 available<total,用total当基线会把"客户没动"误算成"已用一堆"
+    record_sold([(em, int(av)) for em, _ck, _tot, av in pending])   # 记卖出日期+卖时基线积分(available)
+    done = exported | {em.lower() for em, _, _, _ in pending}
     return fname, out, _remaining(entries, done), len(personal)
 
 
@@ -150,7 +156,7 @@ def ledger_view(with_current=False, workers=16):
     for em, info in items:
         bl = int(info.get("baseline") or 0)
         now = currents.get(em)
-        used = (bl - now) if (with_current and isinstance(now, int)) else None
+        used = (bl - now) if (with_current and isinstance(now, (int, float))) else None
         by_date.setdefault(info.get("sold_at") or "?", []).append({
             "email": em, "sold_at": info.get("sold_at"), "baseline": bl,
             "current": now if with_current else None, "used": used,

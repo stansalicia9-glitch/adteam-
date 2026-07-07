@@ -203,6 +203,16 @@ def extract_after_login(console, page, tag):
         tok = tok or holder["t"] or _ims_token()
         _dbg(tag, f"SLOW org={org or '-'} tok={'Y' if tok else 'N'} bps={holder['seen']} url={str(page.url)[:110]} | {_ims_diag()}")
 
+    # ★有 token 但页面卡在裸根页(没重定向出 @AdobeOrg)→ 用 token 查组织 API 兜底(协议路径已这么做,浏览器路径别白扔可用token)
+    if tok and not org:
+        try:
+            _orgs = jil.list_organizations(tok)
+            if _orgs:
+                org = _orgs[0]["id"]
+                print(f"[{tag}] 页面没给 org,用 token 查组织兜底 → org={org}（{_orgs[0].get('name','')}）", flush=True)
+        except Exception as _e:
+            print(f"[{tag}] token 查组织兜底失败: {str(_e)[:80]}", flush=True)
+
     if not (org and tok):
         print(f"[{tag}] ❌ 没抓到 org/token（org={org or '无'} token={'有' if tok else '无'} bps-il请求数={holder['seen']}）", flush=True)
         _dbg(tag, f"FAIL org={org or '-'} tok={'Y' if tok else 'N'} bps={holder['seen']} url={str(page.url)[:120]} elapsed={time.time()-_t0:.1f}s | {_ims_diag()}")

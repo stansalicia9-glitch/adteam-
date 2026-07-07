@@ -318,6 +318,11 @@ class AdminLogin:
             except Exception as e:
                 print("[JIL] ERR %s" % str(e)[:80], flush=True)
         if want == "cookie":
+            # ★门禁:子号没选到【企业profile(有linkId)】= 权益没传播/被回收,此时 cookie 是 personal(10分废号)。
+            #   绝不返回它——否则会被当"成功导出"写进 cookie 池、还覆盖掉已导好的企业4000 cookie(打穿"personal绝不卖")。
+            if not (ent and link_id):
+                print("[★cookie] ⚠️ 没有企业profile(personal/权益未传播),判失败不返回cookie(避免10分废号入池)", flush=True)
+                return ""
             ck = "; ".join("%s=%s" % (c.name, c.value) for c in self.s.cookies)
             print("[★cookie] %d 个: %s" % (len(self.s.cookies), ",".join(sorted(set(c.name for c in self.s.cookies)))), flush=True)
             return ck
@@ -437,8 +442,9 @@ def _cfworker_code_fn(email):
                 if code:
                     cand.append((recv or 0, code))
             if cand:
-                cand.sort()
-                return cand[-1][1]   # 发码后最新那封的码
+                # ★有时间戳的取最新那封;都没时间戳时才兜底用最后一封(不删候选,不让收码更脆弱)
+                timed = [c for c in cand if c[0] > 0]
+                return (max(timed, key=lambda x: x[0]) if timed else cand[-1])[1]
             _t.sleep(4)
         return None
     return fn

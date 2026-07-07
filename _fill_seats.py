@@ -68,8 +68,17 @@ def fill_one(console, target, proxy, dry_run, do_extract):
             results = jil.add_users(org_id, product_id, lg, token, emails)
             for r in results:
                 print(f"[{tag}] add status={r['status']}", flush=True)
-            if all(r["status"] in (200, 201, 207) for r in results):
+            if results and all(r["status"] in (200, 201) for r in results):
                 added = emails
+            elif results and all(r["status"] in (200, 201, 207) for r in results):
+                # 207 部分成功:以【重列实际成员】为准,别把批里失败的邮箱也算 added
+                try:
+                    now = {u["email"].lower() for u in jil.list_product_users(org_id, product_id, token)}
+                    added = [e for e in emails if e.lower() in now]
+                    print(f"[{tag}] 207 部分成功:实际加进 {len(added)}/{len(emails)}", flush=True)
+                except Exception as _ve:
+                    print(f"[{tag}] 207 复核失败({str(_ve)[:50]}),保守按全部已提交计", flush=True)
+                    added = emails
         except Exception as e:
             print(f"[{tag}] 加号失败 {str(e)[:60]}", flush=True)
     for acc in picks:
@@ -142,7 +151,7 @@ def main():
           f"(并发{a.workers},{'不导cookie' if a.no_extract else '补完导cookie'}) ====", flush=True)
     do_extract = not a.no_extract
     with cf.ThreadPoolExecutor(max_workers=max(1, a.workers)) as ex:
-        res = list(ex.map(lambda c: fill_one(c, a.seats, proxy, a.dry_run, do_extract), consoles))
+        res = list(ex.map(lambda c: fill_one(c, target, proxy, a.dry_run, do_extract), consoles))
 
     notfull = [r for r in res if r.get("ok") and r.get("gap")]
     print("\n==== 汇总 ====", flush=True)

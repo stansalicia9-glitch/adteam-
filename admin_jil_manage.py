@@ -126,7 +126,7 @@ def process_console_jil(console, add_file, target_seats, dry_run):
             rr = jil.remove_users(org_id, product_id, lg, token, [u["id"] for u in to_remove])
             for r in rr:
                 print(f"[{tag}] remove status={r['status']}", flush=True)
-            if all(r["status"] in (200, 204, 207) for r in rr):
+            if rr and all(r["status"] in (200, 204, 207) for r in rr):
                 print(f"[{tag}] ✅ 已删除 {len(to_remove)} 个非管理员", flush=True)
                 current_emails = set(keep)
         except Exception as exc:
@@ -140,9 +140,18 @@ def process_console_jil(console, add_file, target_seats, dry_run):
             results = jil.add_users(org_id, product_id, lg, token, emails)
             for r in results:
                 print(f"[{tag}] add status={r['status']} -> {str(r['body'])[:300]}", flush=True)
-                # 207 多状态：默认整批视为已提交；逐个失败可后续按 body 精修
-            if all(r["status"] in (200, 201, 207) for r in results):
+            if results and all(r["status"] in (200, 201) for r in results):
                 added = emails
+            elif results and all(r["status"] in (200, 201, 207) for r in results):
+                # 207 多状态=批里有邮箱失败(已注册/域名被拒等)。别整批当成功——以【重列实际成员】为准,
+                #   否则失败的号也被写台账/消耗邮箱池/set_children,下游导CK必失败。
+                try:
+                    now = {u["email"].lower() for u in jil.list_product_users(org_id, product_id, token)}
+                    added = [e for e in emails if e.lower() in now]
+                    print(f"[{tag}] 207 部分成功:实际加进 {len(added)}/{len(emails)}", flush=True)
+                except Exception as _ve:
+                    print(f"[{tag}] 207 复核失败({str(_ve)[:50]}),保守按全部已提交计", flush=True)
+                    added = emails
         except Exception as exc:
             print(f"[{tag}] 批量加失败: {exc}", flush=True)
     for acc in picks:

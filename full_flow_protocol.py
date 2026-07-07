@@ -78,7 +78,9 @@ def main():
           [a["email"] for a in accounts], flush=True)
 
     def exp(a):
-        ck = alp.sub_login_cookie(a)
+        # ★每子号走各自住宅IP(别用本机单一出口直连登录=农场铁证、按org一锅端)
+        import network_proxy as _np
+        ck = alp.sub_login_cookie(a, proxy=_np.proxy_for_id(a["email"]))
         cr = ""
         if ck and args.check_credits:
             q = _quota.query_quota(ck)

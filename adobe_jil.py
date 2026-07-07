@@ -108,12 +108,14 @@ def list_product_users(org_id, product_id, token, page_size=100):
             uid = str((u or {}).get("id") or "").strip()
             if e:
                 out.append({"email": e, "id": uid})
+        # ★分页收尾:优先看本页是否满 page_size(满了几乎肯定还有下一页);X-Page-Count 只作额外上界。
+        #   之前"header缺失默认1→page(1)>=1直接break"会漏拉刚好满100条的org的后续页(漏删幽灵/席位算错)。
         try:
-            total_pages = int(r.headers.get("X-Page-Count", "1") or "1")
+            total_pages = int(r.headers.get("X-Page-Count", "0") or "0")
         except Exception:
-            total_pages = 1
+            total_pages = 0
         page += 1
-        if page >= total_pages or len(users) < page_size:
+        if len(users) < page_size or (total_pages and page >= total_pages):
             break
     return out
 
@@ -190,11 +192,11 @@ def list_products(org_id, token, page_size=100):
                     or x.get("productName") or x.get("displayName") or "")
             out.append({"id": pid, "name": name, "total": _extract_qty(x)})
         try:
-            total_pages = int(r.headers.get("X-Page-Count", "1") or "1")
+            total_pages = int(r.headers.get("X-Page-Count", "0") or "0")
         except Exception:
-            total_pages = 1
+            total_pages = 0
         page += 1
-        if page >= total_pages or len(prods) < page_size:
+        if len(prods) < page_size or (total_pages and page >= total_pages):
             break
     return out
 
@@ -226,11 +228,11 @@ def list_org_users(org_id, token, page_size=100):
             if e:
                 out.append({"email": e, "id": uid})
         try:
-            total_pages = int(r.headers.get("X-Page-Count", "1") or "1")
+            total_pages = int(r.headers.get("X-Page-Count", "0") or "0")
         except Exception:
-            total_pages = 1
+            total_pages = 0
         page += 1
-        if page >= total_pages or len(users) < page_size:
+        if len(users) < page_size or (total_pages and page >= total_pages):
             break
     return out
 

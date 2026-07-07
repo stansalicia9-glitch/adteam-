@@ -51,7 +51,7 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
     print(f"[{tag}] 换号:请求删 {len(old_set)} 个旧子号 {sorted(old_set)}", flush=True)
     if not old_set:
         print(f"[{tag}] 没指定旧子号,跳过", flush=True)
-        return []
+        return [], []
 
     if pre_token is not None:
         tok, did = pre_token  # 已并发预登录,直接用
@@ -59,7 +59,7 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
         tok, did = rt.ensure_token(console, proxy)
     if not tok:
         print(f"[{tag}] ❌ 无可用 token(先登录母号/播种),跳过", flush=True)
-        return []
+        return [], []
     if did:
         try:
             acm.save_consoles_merge([console])
@@ -72,11 +72,11 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
     except Exception as exc:
         print(f"[{tag}] ❌ 取 license-groups 失败({str(exc)[:90]});多半是协议登录拿到 personal token"
               f"(母号没选到企业admin profile)或token失效/bps-il超时 → 跳过该母号(不崩,其它母号继续)", flush=True)
-        return []
+        return [], []
     lg = ajm._pick_lg(groups, console)
     if not lg:
         print(f"[{tag}] 没找到 license group,跳过", flush=True)
-        return []
+        return [], []
 
     keep = {e.lower() for e in console.get("keep_admin_emails", [])}
     users = jil.list_product_users(org_id, product_id, token)  # [{email,id}]
@@ -91,7 +91,7 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
     print(f"[{tag}] 实际能删 {want}: {[u['email'] for u in to_remove]}", flush=True)
     if want == 0:
         print(f"[{tag}] 没有可删的旧子号,跳过", flush=True)
-        return []
+        return [], []
 
     if dry_run:
         data = pool.list_accounts(limit=1000000)
@@ -99,22 +99,26 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
                  if item.get("status") == "available" and item["email"].lower() not in current_emails][:want]
         print(f"[{tag}] [DRY-RUN] 拟删 {[u['email'] for u in to_remove]}", flush=True)
         print(f"[{tag}] [DRY-RUN] 拟从邮箱池加 {want} 个: {picks}（未实际操作）", flush=True)
-        return []
+        return [], []
 
     # 1) 删旧
     try:
         rr = jil.remove_users(org_id, product_id, lg, token, [u["id"] for u in to_remove])
-        ok_rm = all(r["status"] in (200, 204, 207) for r in rr)
-        print(f"[{tag}] 删旧 status={[r['status'] for r in rr]} {'✅' if ok_rm else '⚠️部分失败'}", flush=True)
+        ok_rm = bool(rr) and all(r["status"] in (200, 204, 207) for r in rr)
+        print(f"[{tag}] 删旧 status={[r['status'] for r in rr]} {'✅' if ok_rm else '⚠️失败'}", flush=True)
     except Exception as exc:
         print(f"[{tag}] 删旧失败:{exc},中止该母号(不加新,免席位错乱)", flush=True)
-        return []
+        return [], []
+    # ★删旧没全部成功就中止(不抛异常的 4xx 也算失败):绝不在"旧号还占着席位"时再加新→否则超席位/席位错乱,
+    #   旧号还活着(可能已卖给客户),后面清"已售"也不会误清它。
+    if not ok_rm:
+        print(f"[{tag}] 删旧未全部成功,中止该母号不加新(免席位错乱);旧号未删、其cookie/已售状态不动", flush=True)
+        return [], []
 
     # ★删→加之间拟人延迟:别一秒踢一秒加(原子踢加=机器特征),停 ~15s 再加,像真人管理员
-    if not dry_run:
-        _d = random.uniform(13, 17)
-        print(f"[{tag}] 删旧完成,停 {_d:.0f}s 再加新(拟人,避免原子踢加)…", flush=True)
-        time.sleep(_d)
+    _d = random.uniform(13, 17)
+    print(f"[{tag}] 删旧完成,停 {_d:.0f}s 再加新(拟人,避免原子踢加)…", flush=True)
+    time.sleep(_d)
 
     current_after = current_emails - found
     # 2) 加等量新
@@ -125,8 +129,17 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
         try:
             results = jil.add_users(org_id, product_id, lg, token, emails)
             print(f"[{tag}] 加新 status={[r['status'] for r in results]}", flush=True)
-            if all(r["status"] in (200, 201, 207) for r in results):
+            if results and all(r["status"] in (200, 201) for r in results):
                 added = emails
+            elif results and all(r["status"] in (200, 201, 207) for r in results):
+                # 207 部分成功:以【重列实际成员】为准,别把失败的邮箱也算 added(会白占邮箱池+假可卖记录)
+                try:
+                    now = {u["email"].lower() for u in jil.list_product_users(org_id, product_id, token)}
+                    added = [e for e in emails if e.lower() in now]
+                    print(f"[{tag}] 207 部分成功:实际加进 {len(added)}/{len(emails)}", flush=True)
+                except Exception as _ve:
+                    print(f"[{tag}] 207 复核失败({str(_ve)[:50]}),保守按全部已提交计", flush=True)
+                    added = emails
         except Exception as exc:
             print(f"[{tag}] 加新失败:{exc}", flush=True)
     added_accounts = []
@@ -144,7 +157,8 @@ def swap_one_console(console, old_emails, proxy, dry_run, pre_token=None):
     new_children += added_accounts
     console_children.set_children(console, new_children)
     print(f"[{tag}] ✅ 换号完成:删 {want} / 加 {len(added_accounts)};新子号={[a['email'] for a in added_accounts]}", flush=True)
-    return added_accounts
+    # ★返回(新加账号, 实际删掉的旧号email)——removed 供 run() 精确清理cookie池/已售(只清真删掉的,不连累跳过的母号)
+    return added_accounts, sorted(found)
 
 
 def run(args):
@@ -167,11 +181,11 @@ def run(args):
         tasks.append((c, sw.get("old") or []))
 
     # ★阶段1:并发预登录母号(ensure_token 协议拿码最慢,这是母号级并发的加速点)
-    #   throttle(限速错峰,全自动监控用):母号【串行】预登录,别短时间同时登录一堆母号
     throttle = bool(getattr(args, "throttle", False))
-    # ★母号级并发(用户选档:5)。每母号走各自住宅IP/不同org,几个母号并行相对安全;
-    #   提速靠"母号并行",防封靠"每母号内部删旧停5s再加新"(见 swap_one_console)+ 每母号独立IP。
-    cw = max(5, int(getattr(args, "console_workers", 3) or 3))
+    # ★母号级并发。防封靠"每母号内部删旧停15s再加新"(见 swap_one_console)+每母号独立住宅IP。
+    #   throttle(全自动监控/限速错峰)→ 强制串行(cw=1)+母号间随机间隔(见下);否则尊重传入的
+    #   console_workers(★不再硬锁≥5——之前 max(5,…) 会无视 --console-workers 5母号齐发,正是批量封号模式)。
+    cw = 1 if throttle else max(1, int(getattr(args, "console_workers", 3) or 3))
 
     def _pre(item):
         c, old = item
@@ -189,22 +203,30 @@ def run(args):
         with _cf.ThreadPoolExecutor(max_workers=cw) as ex:
             pre = list(ex.map(_pre, tasks))
     else:
-        pre = [_pre(t) for t in tasks]
+        # 串行:throttle 时母号间 30~90s 随机间隔(拟人错峰,别短时间连登一堆母号)
+        pre = []
+        for _i, _t in enumerate(tasks):
+            if throttle and _i > 0:
+                _s = random.uniform(30, 90)
+                print(f"#### throttle:母号预登录间隔 {_s:.0f}s ####", flush=True)
+                time.sleep(_s)
+            pre.append(_pre(_t))
 
     # 阶段2:换号(删旧+加新),母号级并发=cw(各走各自住宅IP/不同org;adobe_jil 用 threading.local 存代理,
-    #   并发各走各IP、线程安全)。每母号内部仍"删旧停5s再加新"防原子踢加;去掉了母号间大停顿,靠并发提速。
+    #   并发各走各IP、线程安全)。每母号内部仍"删旧停15s再加新"防原子踢加。
     all_new = []
-    swapped = []  # [(console, [新账号dict]) ...]
+    swapped = []      # [(console, [新账号dict]) ...] 只含真加了新号的母号(供推送)
+    removed_all = set()   # 实际删掉的旧号email(小写),供精确清理cookie池/已售——只清真删掉的
 
     def _do_swap(item):
         c, old, tok, did = item
         ctag = c.get("admin_email") or c.get("name") or "console"
         try:
-            new = swap_one_console(c, old, proxy, args.dry_run, pre_token=(tok, did))
+            added, removed = swap_one_console(c, old, proxy, args.dry_run, pre_token=(tok, did))
         except Exception as exc:
             print(f"[{ctag}] 换号异常,跳过(其它母号继续): {str(exc)[:100]}", flush=True)
             return None
-        return (c, new) if new else None
+        return (c, added, removed) if (added or removed) else None
 
     if cw > 1 and len(pre) > 1:
         import concurrent.futures as _cf2
@@ -212,11 +234,22 @@ def run(args):
         with _cf2.ThreadPoolExecutor(max_workers=cw) as ex:
             _results2 = list(ex.map(_do_swap, pre))
     else:
-        _results2 = [_do_swap(item) for item in pre]
+        _results2 = []
+        for _i, _item in enumerate(pre):
+            if throttle and _i > 0:
+                _s = random.uniform(30, 90)
+                print(f"#### throttle:母号换号间隔 {_s:.0f}s ####", flush=True)
+                time.sleep(_s)
+            _results2.append(_do_swap(_item))
     for _r in _results2:
         if _r:
-            all_new += _r[1]
-            swapped.append(_r)
+            _rc, _radded, _rremoved = _r
+            for _e in _rremoved:
+                removed_all.add(str(_e).strip().lower())
+            if not _radded:
+                continue
+            all_new += _radded
+            swapped.append((_rc, _radded))
 
     print("#" * 64, flush=True)
     print(f"换号汇总:本次新加 {len(all_new)} 个子号", flush=True)
@@ -277,10 +310,11 @@ def run(args):
             import firefly_register_yescaptcha as _fry
             _bn = {str(e.get("name") or "").lower(): e for e in _fry._load_adobe2api_cookie_entries()}
             _del = 0
-            for sw in swaps:
-                for _old in (sw.get("old") or []):
-                    if _bn.pop(str(_old).strip().lower(), None) is not None:
-                        _del += 1
+            # ★只清【实际删掉的旧号】(removed_all),不遍历入参 swaps——否则跳过/删旧失败的母号的旧号
+            #   (可能还在团队、还活着、已卖给客户)会被误删cookie/误标未售 → 同号双卖给两个客户。
+            for _old in removed_all:
+                if _bn.pop(_old, None) is not None:
+                    _del += 1
             _allnew = [{"email": (a.get("email") or "").strip(), "cookie": cookie_results.get((a.get("email") or "").strip().lower())}
                        for _c, _na in swapped for a in _na if cookie_results.get((a.get("email") or "").strip().lower())]
             for a in _allnew:
@@ -290,10 +324,7 @@ def run(args):
             # ★换号删旧号 → 同步从"已售"清单(exported_accounts.txt)清掉旧号:旧号回收、该号位变回【未售】,新号可重新卖
             try:
                 import _export_a2a
-                _olds = set()
-                for sw in swaps:
-                    for _old in (sw.get("old") or []):
-                        _olds.add(str(_old).strip().lower())
+                _olds = set(removed_all)   # ★同上:只把实际删掉的旧号清出已售,别连累跳过的母号
                 _cur = _export_a2a.load_exported()
                 _b4 = len(_cur)
                 _cur -= _olds
