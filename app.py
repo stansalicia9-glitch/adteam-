@@ -1381,7 +1381,9 @@ def api_login_discover():
     args = ["admin_login_discover.py"]
     if body.get("console"):
         args += ["--console", body["console"]]
-    if body.get("headed"):
+    if body.get("protocol_only"):
+        args += ["--protocol-only"]   # 母号协议开关ON:纯协议零浏览器,失败不回退浏览器
+    elif body.get("headed"):
         args += ["--headed"]
     if body.get("workers"):
         args += ["--workers", str(body["workers"])]

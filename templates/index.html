@@ -127,6 +127,7 @@
       <button id="btnCfgSave" class="sm">保存配置</button>
       <button id="btnAddConsole" class="sm primary">➕ 添加母号</button>
       <label>并发 <input id="loginWorkers" type="number" min="1" value="3" style="width:48px"></label>
+      <label title="ON=母号纯协议登录母号(零浏览器,微软联合登录号也能登,用 密码+refresh_token 接码);协议失败不回退浏览器。OFF=协议优先+浏览器兜底(有头)"><input id="protoLogin" type="checkbox" checked> 🔒纯协议登录母号</label>
       <label><input id="loginHeaded" type="checkbox" checked> 有头(看过程)</label>
       <button id="btnLoginAll" class="sm primary">⚡ 登录母号</button>
       <button id="btnScanAll" class="sm">⚡ 批量扫描</button>
@@ -844,10 +845,18 @@ async function loadConsoles(){
       const sel=b.dataset.sel, act=b.dataset.act;
       if(act==='quota'){ await showConsoleQuota(sel, b); return; }
       if(act==='jil_test'){
-        if(!confirm(`【${sel}】登录母号并自动提取 产品地址/org/product/token？\n（有头浏览器，方便看；已播种则复用 session，未播种用 账密+refresh_token 自动登录）`)) return;
-        const r=await api('/api/admin/login_discover','POST',{console:sel, headed:true});
-        if(r.ok) appendLog(`[登录母号] ${sel} 已开始：登录并提取 org/product/users地址/token，看下方日志；完成后即可"扫描子号/删加子号"`);
-        else alert('启动失败：'+r.msg);
+        const proto = $('#protoLogin') && $('#protoLogin').checked;
+        if(proto){
+          if(!confirm(`【${sel}】纯协议登录母号(零浏览器,微软号也能登)→ 自动提取 org/product/token？\n（用该母号 密码+refresh_token 接码；协议失败不回退浏览器）`)) return;
+          const r=await api('/api/admin/login_discover','POST',{console:sel, protocol_only:true});
+          if(r.ok) appendLog(`[登录母号·🔒纯协议] ${sel} 已开始(零浏览器)：协议登录+提取token，看下方日志`);
+          else alert('启动失败：'+r.msg);
+        }else{
+          if(!confirm(`【${sel}】浏览器登录母号并自动提取 产品地址/org/product/token？\n（协议优先,失败回退有头浏览器；已播种复用 session）`)) return;
+          const r=await api('/api/admin/login_discover','POST',{console:sel, headed:true});
+          if(r.ok) appendLog(`[登录母号] ${sel} 已开始：登录并提取 org/product/users地址/token，看下方日志；完成后即可"扫描子号/删加子号"`);
+          else alert('启动失败：'+r.msg);
+        }
       }
       else if(act==='jil_refresh'){
         b.textContent='刷新中…'; b.disabled=true;
@@ -939,14 +948,16 @@ $('#btnDelSelected').onclick=async()=>{
 };
 $('#btnLoginAll').onclick=async()=>{
   const w=parseInt($('#loginWorkers').value||'3');
+  const proto=$('#protoLogin') && $('#protoLogin').checked;
   const headed=$('#loginHeaded').checked;
   const checked=[...document.querySelectorAll('.consoleChk:checked')].map(x=>x.dataset.sel);
   const group=$('#groupFilter').value;
   const sel=checked.length ? checked : (group ? _visibleConsoles() : []);
   const scope=checked.length? `勾选的 ${checked.length} 个`:(group?`${group} 分组 ${sel.length} 个`:'全部(未完成的)');
-  if(!confirm(`并发登录【${scope}】母号 (workers=${w}, ${headed?'有头·看过程':'无头·更快'})？\n并发=同时 ${w} 个，完一个补一个，直到全部完成。${sel.length?'':'\\n(没勾选=自动跳过已完成的，只跑没搞定的)'}`)) return;
-  const r=await api('/api/admin/login_discover','POST',{workers:w, headed, consoles:sel});
-  if(r.ok) appendLog(`[登录母号] 已开始：${scope}，workers=${w} ${headed?'有头':'无头'}，看日志；完成后自动刷新列表`);
+  const mode = proto ? '🔒纯协议·零浏览器' : (headed?'有头·看过程':'无头·更快');
+  if(!confirm(`并发登录【${scope}】母号 (workers=${w}, ${mode})？\n并发=同时 ${w} 个，完一个补一个，直到全部完成。${sel.length?'':'\\n(没勾选=自动跳过已完成的，只跑没搞定的)'}`)) return;
+  const r=await api('/api/admin/login_discover','POST',{workers:w, headed, protocol_only:proto, consoles:sel});
+  if(r.ok) appendLog(`[登录母号] 已开始：${scope}，workers=${w} ${mode}，看日志；完成后自动刷新列表`);
   else alert('启动失败：'+r.msg);
 };
 $('#btnAddConsoleCancel').onclick=()=>{ $('#addConsoleForm').style.display='none'; };

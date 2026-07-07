@@ -221,15 +221,21 @@ def extract_after_login(console, page, tag):
     return _fill_product_and_seats(console, org, tok, tag)
 
 
-def discover_one(console, proxy, headless=True):
-    """优先纯协议发现 org/product/token(不开浏览器);协议失败再回退浏览器登录提取。"""
+def discover_one(console, proxy, headless=True, protocol_only=False):
+    """优先纯协议发现 org/product/token(不开浏览器);协议失败再回退浏览器登录提取。
+    protocol_only=True(母号协议开关ON):只走纯协议、协议失败【不回退浏览器】——微软联合登录号浏览器headless必挂,
+    纯协议用 admin_password+admin_refresh_token 接码即可,零浏览器。"""
     tag = console.get("name") or console.get("admin_email") or "console"
     try:
         if discover_one_protocol(console, proxy):
             return True
-        print(f"[{tag}] 协议发现没成,回退浏览器登录提取…", flush=True)
+        print(f"[{tag}] 协议发现没成{'(纯协议模式,不回退浏览器)' if protocol_only else ',回退浏览器登录提取…'}", flush=True)
     except Exception as exc:
-        print(f"[{tag}] 协议发现异常 {str(exc)[:90]},回退浏览器", flush=True)
+        print(f"[{tag}] 协议发现异常 {str(exc)[:90]}{'(纯协议模式,不回退浏览器)' if protocol_only else ',回退浏览器'}", flush=True)
+    if protocol_only:
+        print(f"[{tag}] ❌ 纯协议登录未成:检查该母号 admin_password / admin_refresh_token 是否有效"
+              f"(微软号需有效RT接码);不回退浏览器。", flush=True)
+        return False
     return discover_one_browser(console, proxy, headless=headless)
 
 
@@ -299,7 +305,7 @@ def run(args):
         print("=" * 60, flush=True)
         print(f"登录并提取 JSON: {c.get('name')} / {c.get('admin_email')}", flush=True)
         try:
-            return bool(discover_one(c, proxy, headless=not args.headed))
+            return bool(discover_one(c, proxy, headless=not args.headed, protocol_only=getattr(args, "protocol_only", False)))
         except Exception as exc:
             print(f"[{c.get('name') or c.get('admin_email')}] 异常: {exc}", flush=True)
             return False
@@ -332,6 +338,7 @@ def parse_args(argv):
     ap.add_argument("--workers", type=int, default=1, help="并发数（同时登录几个母号）")
     ap.add_argument("--force", action="store_true", help="批量时也重登已完成的母号（默认跳过）")
     ap.add_argument("--only", default="", help="逗号分隔的管理员邮箱/名称，只处理这些（勾选批量用，不跳过）")
+    ap.add_argument("--protocol-only", action="store_true", help="母号协议开关ON:只走纯协议(零浏览器),协议失败不回退浏览器(微软号推荐)")
     return ap.parse_args(argv)
 
 
