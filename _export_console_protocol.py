@@ -35,6 +35,8 @@ def main():
     ap.add_argument("--accounts", required=True)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--proxy", default="")
+    ap.add_argument("--retry-rounds", type=int, default=3, help="失败号重试轮数(等Firefly权益传播/429冷却;刚加的子号第一次多半没传播)")
+    ap.add_argument("--retry-wait", type=int, default=75, help="每轮之间等待秒数")
     args, _ignored = ap.parse_known_args()  # 忽略浏览器版独有参数
 
     base_proxy = (args.proxy or "").strip() or None              # 显式 --proxy 优先(给就全用它)
@@ -57,17 +59,17 @@ def main():
         em = a["email"]
         if not a.get("password"):
             print(f"  [{em}] ❌ 没密码,跳过", flush=True)
-            return em, ""
+            return a, ""
         time.sleep(random.uniform(0.4, 2.2))                     # ★错峰:别一秒一堆同时登录,分散登录时间(拟人)
         pxy = network_proxy.proxy_for_id(em) if use_resi else (base_proxy or network_proxy.configured_proxy() or None)
         try:
             ck = alp.sub_login_cookie(a, proxy=pxy)
         except Exception as exc:
             print(f"  [{em}] ❌ 导出异常: {str(exc)[:70]}", flush=True)
-            return em, ""
+            return a, ""
         if not ck:
-            print(f"  [{em}] ❌ 登录失败/没拿到 cookie", flush=True)
-            return em, ""
+            print(f"  [{em}] ❌ 登录失败/没拿到 cookie(权益未传播/限流/需MFA)", flush=True)
+            return a, ""
         tot = "?"
         if _quota:
             try:
@@ -76,13 +78,30 @@ def main():
             except Exception:
                 pass
         print(f"  [{em}] ✅ cookie {len(ck)}字 积分{tot}", flush=True)
-        return em, ck
+        return a, ck
 
+    # ★分轮跑:刚加的子号第一次多半"权益没传播/被门禁拒/429限流",隔一会重试失败号(等传播+冷却),
+    #   比一次性判死大幅提升成功率。成功的不再重试。
     results = {}
-    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        for em, ck in ex.map(_one, accts):
-            if ck:
-                results[em.lower()] = (em, ck)
+    pending = list(accts)
+    rounds = max(1, int(args.retry_rounds or 1))
+    for rnd in range(rounds):
+        if rnd > 0:
+            wait = max(0, int(args.retry_wait or 0))
+            print(f"[协议导出] 第 {rnd + 1}/{rounds} 轮:{len(pending)} 个失败号等 {wait}s 后重试(等Firefly权益传播/429冷却)…", flush=True)
+            time.sleep(wait)
+        cur, pending = pending, []
+        with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+            for a, ck in ex.map(_one, cur):
+                if ck:
+                    results[a["email"].lower()] = (a["email"], ck)
+                else:
+                    pending.append(a)
+        if not pending:
+            break
+    if pending:
+        print(f"[协议导出] {len(pending)} 个号 {rounds} 轮仍失败:{[a['email'] for a in pending]}"
+              f"(多半权益还没传播,再等几分钟单独重导;或该号需MFA/SMS无法纯协议)", flush=True)
 
     # merge 进 firefly_adobe2api_cookies.json(单进程主线程一次性写,无并发竞争)
     entries = fry._load_adobe2api_cookie_entries()  # [{name, cookie}]
