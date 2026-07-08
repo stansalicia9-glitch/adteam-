@@ -80,14 +80,34 @@ def main():
         print(f"  [{em}] ✅ cookie {len(ck)}字 积分{tot}", flush=True)
         return a, ck
 
+    def _flush(results):
+        """把目前成功的 cookie merge 进 firefly_adobe2api_cookies.json(主线程调,无并发竞争)。
+        ★每轮结束就调一次——中途被停/进程被杀也不丢已成功的号(之前只在全部跑完才写→停一下全丢)。"""
+        if not results:
+            return 0
+        entries = fry._load_adobe2api_cookie_entries()  # [{name, cookie}]
+        by_name = {}
+        for e in entries:
+            nm = str(e.get("name") or "").strip().lower()
+            if nm:
+                by_name[nm] = e
+        for low, (em, ck) in results.items():
+            by_name[low] = {"name": em, "cookie": ck}
+        fry._write_adobe2api_cookie_entries(list(by_name.values()))
+        return len(by_name)
+
     # ★分轮跑:刚加的子号第一次多半"权益没传播/被门禁拒/429限流",隔一会重试失败号(等传播+冷却),
-    #   比一次性判死大幅提升成功率。成功的不再重试。
+    #   比一次性判死大幅提升成功率。成功的不再重试。★每轮结束立即落盘,进程被杀不丢已成功的。
     results = {}
     pending = list(accts)
     rounds = max(1, int(args.retry_rounds or 1))
     for rnd in range(rounds):
         if rnd > 0:
             wait = max(0, int(args.retry_wait or 0))
+            # ★先把上一轮成功的落盘,再等——万一在这 180s 等待期间被停掉,已成功的不丢
+            if results:
+                _flush(results)
+                print(f"[协议导出] 已落盘 {len(results)} 个成功号(等待期间被停也不丢)", flush=True)
             print(f"[协议导出] 第 {rnd + 1}/{rounds} 轮:{len(pending)} 个失败号等 {wait}s 后重试(等Firefly权益传播/429冷却)…", flush=True)
             time.sleep(wait)
         cur, pending = pending, []
@@ -97,23 +117,15 @@ def main():
                     results[a["email"].lower()] = (a["email"], ck)
                 else:
                     pending.append(a)
+        _flush(results)   # ★每轮跑完立即落盘
         if not pending:
             break
     if pending:
         print(f"[协议导出] {len(pending)} 个号 {rounds} 轮仍失败:{[a['email'] for a in pending]}"
               f"(多半权益还没传播,再等几分钟单独重导;或该号需MFA/SMS无法纯协议)", flush=True)
 
-    # merge 进 firefly_adobe2api_cookies.json(单进程主线程一次性写,无并发竞争)
-    entries = fry._load_adobe2api_cookie_entries()  # [{name, cookie}]
-    by_name = {}
-    for e in entries:
-        nm = str(e.get("name") or "").strip().lower()
-        if nm:
-            by_name[nm] = e
-    for low, (em, ck) in results.items():
-        by_name[low] = {"name": em, "cookie": ck}
-    fry._write_adobe2api_cookie_entries(list(by_name.values()))
-    print(f"[协议导出] 完成:成功 {len(results)}/{len(accts)},已写 firefly_adobe2api_cookies.json(库内共{len(by_name)}条)", flush=True)
+    total_in_lib = _flush(results)
+    print(f"[协议导出] 完成:成功 {len(results)}/{len(accts)},已写 firefly_adobe2api_cookies.json(库内共{total_in_lib}条)", flush=True)
     return 0 if results else 1
 
 
