@@ -81,11 +81,10 @@ def _token_valid(console):
 
 
 def ensure_token(console, proxy, log=_log):
-    """确保 console 有可用 jil_token：旧的有效就用；失效/缺失就【纯协议登录】拿新的(不开浏览器),
-    协议失败再回退到已播种 session 浏览器刷新。返回 (token_or_None, refreshed_bool)。
-    调用方在 refreshed=True 时负责保存 config。"""
-    # ★每母号专属住宅 IP:协议登录(下面 proxy) + 本线程后续所有 JIL 调用,都走这个母号的固定住宅出口
-    #   (避免"同一 IP 操作一堆母号"被 Adobe 批量风控)。
+    """确保 console 有可用 jil_token。★母号【只用浏览器】(复用已播种 admin_profile session),
+    彻底不走任何协议:token 有效就用;失效/缺失就用【已登录的浏览器 session(headless)】拦 bps-il 拿新 token,
+    绝不重新登录/接码/走协议。session 失效才需重新【手动登录】。返回 (token_or_None, refreshed_bool)。"""
+    # ★每母号专属住宅 IP:本线程后续所有 JIL 调用走这个母号固定住宅出口(避免同 IP 操作一堆母号被批量风控)。
     try:
         import network_proxy as _np
         import adobe_jil as _aj
@@ -98,38 +97,24 @@ def ensure_token(console, proxy, log=_log):
     tag = console.get("name") or console.get("admin_email") or "console"
     if _token_valid(console):
         return console.get("jil_token", ""), False
-    import admin_login_protocol
-    # ① 先用母号存的 session cookie 静默续 jil_token(免接码/免浏览器):登录过的母号 token 失效优先走这
-    try:
-        if console.get("admin_session_cookie"):
-            log(f"[{tag}] token 失效 → 先用 session cookie 静默续(免接码)…")
-            t = admin_login_protocol.refresh_jil_via_cookie(console, proxy, log=log)
-            if t:
-                console["jil_token"] = t
-                if _token_valid(console):
-                    log(f"[{tag}] ✅ cookie 静默续到 jil_token(这次没接码)")
-                    return t, True
-                log(f"[{tag}] cookie 续的 token 调 JIL 没过 → 降级重新登录")
-    except Exception as exc:
-        log(f"[{tag}] cookie 续期异常 {str(exc)[:80]} → 降级登录")
-    # ② 纯协议登录(要接码;不开浏览器、不依赖 admin_profile;换机/无 session 也能拿 token)
-    try:
-        log(f"[{tag}] → 纯协议登录(要接码,不开浏览器)…")
-        t = admin_login_protocol.protocol_login(console, proxy, log=log)
-        if t:
-            console["jil_token"] = t
-            log(f"[{tag}] ✅ 协议登录拿到 token")
-            return t, True
-        log(f"[{tag}] 协议登录未拿到 token，回退浏览器 session 刷新")
-    except Exception as exc:
-        log(f"[{tag}] 协议登录异常 {str(exc)[:90]}，回退浏览器")
-    # ② 兜底：已播种 session 浏览器拦 bps-il
+    # ★默认【浏览器优先】:复用已播种 session 拦 bps-il 拿 token(不重新登录/不接码,修"登录态已有还重新登录")
     t = refresh_one(console, proxy)
     if t:
         console["jil_token"] = t
-        log(f"[{tag}] ✅ token 已自动刷新(浏览器兜底)")
+        log(f"[{tag}] ✅ token 已用浏览器 session 刷新(复用已有登录态,没重新登录)")
         return t, True
-    log(f"[{tag}] ❌ 协议+浏览器都失败（检查 admin_password/refresh_token，或重新【登录母号/播种】）")
+    # 兜底(协议保留,仅浏览器 session 失效时才用):协议登录接码拿 token
+    try:
+        import admin_login_protocol
+        log(f"[{tag}] 浏览器 session 失效 → 协议兜底登录(接码)…")
+        t = admin_login_protocol.protocol_login(console, proxy, log=log)
+        if t:
+            console["jil_token"] = t
+            log(f"[{tag}] ✅ 协议兜底拿到 token")
+            return t, True
+    except Exception as exc:
+        log(f"[{tag}] 协议兜底异常 {str(exc)[:90]}")
+    log(f"[{tag}] ❌ 浏览器+协议都没拿到 token → 重新点【手动登录】登一次")
     return None, True
 
 
@@ -144,16 +129,16 @@ def run(args):
     refreshed_list = []
     for c in consoles:
         print("=" * 50, flush=True)
-        print(f"协议登录刷新 token: {c.get('name')} / {c.get('admin_email')}", flush=True)
-        try:
-            import admin_login_protocol
-            t = admin_login_protocol.protocol_login(c, proxy)
-        except Exception as exc:
-            print(f"[{c.get('name')}] 协议登录异常 {str(exc)[:80]}", flush=True)
-            t = ""
+        print(f"浏览器刷新 token(默认复用已播种 session): {c.get('name')} / {c.get('admin_email')}", flush=True)
+        t = refresh_one(c, proxy)   # ★浏览器优先:复用已登录 session 拦 bps-il
         if not t:
-            print(f"[{c.get('name')}] 协议登录没拿到 token，试浏览器兜底…", flush=True)
-            t = refresh_one(c, proxy)
+            print(f"[{c.get('name')}] 浏览器没拿到,协议兜底(接码)…", flush=True)
+            try:
+                import admin_login_protocol
+                t = admin_login_protocol.protocol_login(c, proxy)
+            except Exception as exc:
+                print(f"[{c.get('name')}] 协议兜底异常 {str(exc)[:80]}", flush=True)
+                t = ""
         if t:
             c["jil_token"] = t
             refreshed_list.append(c)

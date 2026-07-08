@@ -222,19 +222,16 @@ def extract_after_login(console, page, tag):
 
 
 def discover_one(console, proxy, headless=True, protocol_only=False):
-    """优先纯协议发现 org/product/token(不开浏览器);协议失败再回退浏览器登录提取。
-    protocol_only=True(母号协议开关ON):只走纯协议、协议失败【不回退浏览器】——微软联合登录号浏览器headless必挂,
-    纯协议用 admin_password+admin_refresh_token 接码即可,零浏览器。"""
+    """★默认【只用浏览器】(复用已播种 session)发现/提取 org/product/token。
+    protocol_only=True(UI 勾了🔒协议登录母号)才走纯协议(接码、零浏览器、不回退)——协议保留作可选项,默认关闭。"""
     tag = console.get("name") or console.get("admin_email") or "console"
-    try:
-        if discover_one_protocol(console, proxy):
-            return True
-        print(f"[{tag}] 协议发现没成{'(纯协议模式,不回退浏览器)' if protocol_only else ',回退浏览器登录提取…'}", flush=True)
-    except Exception as exc:
-        print(f"[{tag}] 协议发现异常 {str(exc)[:90]}{'(纯协议模式,不回退浏览器)' if protocol_only else ',回退浏览器'}", flush=True)
     if protocol_only:
-        print(f"[{tag}] ❌ 纯协议登录未成:检查该母号 admin_password / admin_refresh_token 是否有效"
-              f"(微软号需有效RT接码);不回退浏览器。", flush=True)
+        try:
+            if discover_one_protocol(console, proxy):
+                return True
+            print(f"[{tag}] 纯协议发现没成(协议模式,不回退浏览器):检查 admin_password/admin_refresh_token", flush=True)
+        except Exception as exc:
+            print(f"[{tag}] 协议发现异常 {str(exc)[:90]}(协议模式,不回退浏览器)", flush=True)
         return False
     return discover_one_browser(console, proxy, headless=headless)
 

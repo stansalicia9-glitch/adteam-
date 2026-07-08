@@ -127,8 +127,8 @@
       <button id="btnCfgSave" class="sm">保存配置</button>
       <button id="btnAddConsole" class="sm primary">➕ 添加母号</button>
       <label>并发 <input id="loginWorkers" type="number" min="1" value="3" style="width:48px"></label>
-      <label title="ON=母号纯协议登录母号(零浏览器,微软联合登录号也能登,用 密码+refresh_token 接码);协议失败不回退浏览器。OFF=协议优先+浏览器兜底(有头)"><input id="protoLogin" type="checkbox" checked> 🔒纯协议登录母号</label>
       <label><input id="loginHeaded" type="checkbox" checked> 有头(看过程)</label>
+      <label title="默认关闭=母号只用浏览器(复用已播种 session,不重新登录)。勾选=纯协议登录母号(零浏览器,微软号也能登,用 密码+refresh_token 接码;协议失败不回退浏览器)"><input id="protoLogin" type="checkbox"> 🔒纯协议登录母号</label>
       <button id="btnLoginAll" class="sm primary">⚡ 登录母号</button>
       <button id="btnScanAll" class="sm">⚡ 批量扫描</button>
       <button id="btnRunAll" class="sm warn">⚡ 批量删加</button>
@@ -856,15 +856,16 @@ async function loadConsoles(){
       if(act==='quota'){ await showConsoleQuota(sel, b); return; }
       if(act==='jil_test'){
         const proto = $('#protoLogin') && $('#protoLogin').checked;
+        const headed = $('#loginHeaded') ? $('#loginHeaded').checked : true;
         if(proto){
-          if(!confirm(`【${sel}】纯协议登录母号(零浏览器,微软号也能登)→ 自动提取 org/product/token？\n（用该母号 密码+refresh_token 接码；协议失败不回退浏览器）`)) return;
+          if(!confirm(`【${sel}】🔒纯协议登录母号(零浏览器,微软号也能登)→ 提取 org/product/token?\n（用 密码+refresh_token 接码；协议失败不回退浏览器）`)) return;
           const r=await api('/api/admin/login_discover','POST',{console:sel, protocol_only:true});
-          if(r.ok) appendLog(`[登录母号·🔒纯协议] ${sel} 已开始(零浏览器)：协议登录+提取token，看下方日志`);
+          if(r.ok) appendLog(`[登录母号·🔒纯协议] ${sel} 已开始(零浏览器)，看下方日志`);
           else alert('启动失败：'+r.msg);
         }else{
-          if(!confirm(`【${sel}】浏览器登录母号并自动提取 产品地址/org/product/token？\n（协议优先,失败回退有头浏览器；已播种复用 session）`)) return;
-          const r=await api('/api/admin/login_discover','POST',{console:sel, headed:true});
-          if(r.ok) appendLog(`[登录母号] ${sel} 已开始：登录并提取 org/product/users地址/token，看下方日志；完成后即可"扫描子号/删加子号"`);
+          if(!confirm(`【${sel}】浏览器登录母号并提取 org/product/token?\n（默认:复用已播种 session、只用浏览器不走协议；session 失效会开窗口让你登）`)) return;
+          const r=await api('/api/admin/login_discover','POST',{console:sel, headed});
+          if(r.ok) appendLog(`[登录母号] ${sel} 已开始：浏览器复用 session 提取 token，看下方日志；完成后即可"扫描子号/删加子号"`);
           else alert('启动失败：'+r.msg);
         }
       }
