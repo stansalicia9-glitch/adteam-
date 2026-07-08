@@ -341,13 +341,18 @@ def _push_now(console_email, accounts, expected_count=None, cfg=None, record_id=
     return record
 
 
-def push_console_async(console_email, emit=None, force=False, group=""):
+def push_console_async(console_email, emit=None, force=False, group="", only_emails=None):
+    """only_emails 给定时只推这些子号(单号/子集导出用),不重推整个母号→避免没动的老号被重复导入下游。"""
     cfg = config_for_group(group)
     if not force and not cfg.get("enabled"):
         return False
+    only = {str(e).strip().lower() for e in only_emails if str(e).strip()} if only_emails else None
 
     def worker():
         accounts, expected = collect_console_accounts(console_email)
+        if only is not None:
+            accounts = [a for a in accounts if str(a.get("email") or "").strip().lower() in only]
+            expected = len(accounts)
         rec = _push_now(console_email, accounts, expected_count=expected, cfg=cfg, force=force)
         if emit:
             st = rec["status"]

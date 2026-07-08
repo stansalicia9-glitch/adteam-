@@ -262,11 +262,13 @@ def _console_group(sel):
 def _start_console_extract(sel, items, workers=1, headless=True):
     accounts = _write_child_export_file(items, "console_children_")
     group = _console_group(sel)
+    # ★只推【本次导出的这些子号】,不重推整个母号(单号导出更关键:否则点1个号却把全母号9个都重推一遍)
+    only_emails = [str((it or {}).get("email") or "").strip() for it in (items or []) if str((it or {}).get("email") or "").strip()]
 
     def after_extract(code):
         if code != 0:
             TASK._emit(f"[推送API] {sel} 导出任务 exit={code}，尝试推送已成功导出的 CK")
-        cookie_push.push_console_async(sel, emit=TASK._emit, group=group)
+        cookie_push.push_console_async(sel, emit=TASK._emit, group=group, only_emails=only_emails)
 
     return TASK.start_with_callback(
         _extract_cmd(accounts, workers=workers, headless=headless),
