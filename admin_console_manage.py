@@ -142,6 +142,36 @@ def save_consoles_merge(console_list):
             json.dump(disk, f, indent=2, ensure_ascii=False)
 
 
+def _free_profile(pdir):
+    """★启动前清掉占用该 profile 的【残留 Chrome】+ 删单例锁。
+    根治"上次登录窗口没关就又点一次→同一 user-data-dir 被占→新 Chrome 单例机制秒退(exit 21)→登录失败"。
+    只杀命令行里带 admin_profile + 本母号 profile 目录名的 chrome(不碰用户平时上网的浏览器)。"""
+    import sys as _sys
+    leaf = os.path.basename(os.path.normpath(pdir))   # 本母号 profile 目录名(ASCII,email派生)
+    if _sys.platform.startswith("win") and leaf:
+        try:
+            import subprocess
+            ps = ("Get-CimInstance Win32_Process -Filter \"name='chrome.exe'\" | "
+                  "Where-Object { $_.CommandLine -match 'admin_profile' -and "
+                  "$_.CommandLine -match [regex]::Escape('%s') } | "
+                  "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" % leaf)
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                           timeout=20, capture_output=True)
+            print(f"[Browser] 已清该母号 profile 残留 Chrome(防单例撞车秒退): {leaf}", flush=True)
+            import time as _t
+            _t.sleep(1.0)   # 等进程真正退出、释放锁
+        except Exception as exc:
+            print(f"[Browser] 清残留 Chrome 跳过: {str(exc)[:60]}", flush=True)
+    # Chrome 崩溃/被杀会残留单例锁文件,挡住新实例,一并删掉
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"):
+        try:
+            fp = os.path.join(pdir, name)
+            if os.path.exists(fp):
+                os.remove(fp)
+        except Exception:
+            pass
+
+
 def _launch_admin_context(p, proxy, headless, profile_dir=None):
     """持久化 context：优先用系统新版 Chrome（否则 Adobe 判"浏览器不受支持"会禁用 Add users 弹窗），
     没装则回退内置 Chromium(伪装新版UA)。复用 profile 里播种的 session。"""
@@ -154,6 +184,7 @@ def _launch_admin_context(p, proxy, headless, profile_dir=None):
         proxy=firefly._playwright_proxy_config(proxy) or None,
     )
     pdir = profile_dir or ADMIN_PROFILE
+    _free_profile(pdir)   # ★启动前清残留 Chrome + 删单例锁,防"profile 被占→秒退"
     chrome_path = _resolve_chrome_executable()
     if chrome_path:
         try:
