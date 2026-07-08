@@ -253,6 +253,12 @@ def import_accounts(records, mode="append"):
         for key in incoming_order:
             record = incoming_records[key]
             item = email_state.setdefault(key, {})
+            if "outlook" in str(key).lower():   # ★outlook域子号出图必408(实测),导入即剔除、绝不入可用池;只用hotmail
+                item["status"] = "deprecated"
+                item["reason"] = "outlook域出图408,自动剔除(只用hotmail)"
+                item.setdefault("created_at", _now())
+                item["updated_at"] = _now()
+                continue
             if not record.get("password"):
                 item["status"] = "failed"
                 item["reason"] = "missing Adobe account password"
