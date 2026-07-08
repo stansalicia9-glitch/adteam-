@@ -1114,14 +1114,32 @@ def _wait_for_adobe_login_state(page, timeout=30000):
 
 
 
+def _fill_and_verify(loc, value, timeout, tries=4):
+    """填值 + 回读校验:Adobe 登录页刚加载/hydration 未完成时,太快填进的值会被页面清空
+    (报 'Please enter an email address')。填完 sleep 一下回读 input_value,没进去就等一下重填,
+    直到值真进去或 tries 用尽。根治"输入太快界面没加载好"。"""
+    import time as _t
+    want = (value or "").strip()
+    for _ in range(tries):
+        try:
+            loc.scroll_into_view_if_needed(timeout=1000)
+            loc.fill(value, timeout=timeout)
+            _t.sleep(0.35)
+            if (loc.input_value() or "").strip() == want:
+                return True
+        except Exception:
+            pass
+        _t.sleep(0.6)   # 页面还在加载/re-render → 等一下再重填
+    return False
+
+
 def _fill_first(page, selectors, value, timeout=8000):
     for selector in selectors:
         try:
             loc = page.locator(selector).first
-            loc.wait_for(state="attached", timeout=timeout)
-            loc.scroll_into_view_if_needed(timeout=1000)
-            loc.fill(value, timeout=timeout)
-            return True
+            loc.wait_for(state="visible", timeout=timeout)   # ★等【可见】(不只attached),防页面没加载好就填空值
+            if _fill_and_verify(loc, value, timeout):
+                return True
         except Exception:
             continue
     return False
@@ -1143,8 +1161,7 @@ def _fill_by_label(page, label, value, timeout=5000):
     try:
         loc = page.get_by_label(re.compile(label, re.I)).first
         loc.wait_for(state="visible", timeout=timeout)
-        loc.fill(value, timeout=timeout)
-        return True
+        return _fill_and_verify(loc, value, timeout)   # ★回读校验+重填,防填太快值被页面清空
     except Exception:
         return False
 
