@@ -18,5 +18,5 @@ env["FF_DUMP_REQ"] = "1"
 env["PYTHONIOENCODING"] = "utf-8"
 subprocess.run([sys.executable, "-u", "firefly_login_extract_cookies.py", "--accounts", "_cap_one.txt",
                 "--headless", "--no-manual", "--manual-timeout", "0", "--workers", "1", "--retry-rounds", "1",
-                "--proxy", "http://USER668594-zone-custom-region-US:8b5bba@us.rrp.bestgo.work:10000"], env=env)
+                "--proxy", "http://USER387969-zone-custom-region-US:911ae9@us.rrp.bestgo.work:10000"], env=env)
 print("✅ dump 完", flush=True)
