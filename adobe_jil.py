@@ -5,6 +5,7 @@ token 约 24h 过期，过期后用户重新抓一次粘进配置即可。无需
 经实测：加人请求只需 Authorization + X-Api-Key:ONESIE1 + x-jil-feature，无需指纹头。
 """
 import json
+import random
 import re
 import threading
 import time
@@ -60,18 +61,38 @@ def _json(r):
         return r.text[:300]
 
 
+def _rotate_session(proxies):
+    """把住宅代理 URL 里的 session-XXX 换成新随机 session(=换个住宅出口 IP),绕开抽风的坏 IP。
+    proxies 为 None/无 session 字段则原样返回。"""
+    if not proxies:
+        return proxies
+    newsid = str(random.randint(10 ** 8, 10 ** 9))
+    out = {}
+    for k, v in proxies.items():
+        out[k] = re.sub(r"session-[0-9A-Za-z]+", "session-" + newsid, v) if v else v
+    return out
+
+
 def _request(method, url, **kwargs):
     kwargs.setdefault("timeout", 60)
-    kwargs.setdefault("proxies", _cur_proxies())
+    proxies = kwargs.pop("proxies", None)
+    if proxies is None:
+        proxies = _cur_proxies()
     last = None
     for attempt in range(4):
         try:
-            return _SESSION.request(method, url, **kwargs)
+            return _SESSION.request(method, url, proxies=proxies, **kwargs)
         except requests.RequestException as exc:
             last = exc
             if attempt >= 3:
                 raise
-            print(f"[JIL] 请求异常，{attempt + 1}/4 重试: {type(exc).__name__}: {str(exc)[:120]}", flush=True)
+            # ★SSL/连接/代理错误多半是住宅 session 分到坏 IP → 换个新 session(新 IP)再重试,而不是死磕坏 IP
+            en = type(exc).__name__
+            if proxies and any(s in en for s in ("SSL", "Connection", "Proxy", "Timeout")):
+                proxies = _rotate_session(proxies)
+                print(f"[JIL] 代理session坏,换新住宅IP重试 {attempt + 1}/4: {en}", flush=True)
+            else:
+                print(f"[JIL] 请求异常，{attempt + 1}/4 重试: {en}: {str(exc)[:120]}", flush=True)
             time.sleep(1.5 * (attempt + 1))
     raise last
 
