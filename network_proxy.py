@@ -74,15 +74,18 @@ def _residential_tpl():
             or str(_load_json(APP_CONFIG).get("residential_proxy_tpl") or "").strip())
 
 
-def proxy_for_id(key):
+def proxy_for_id(key, rotate=0):
     """按任意 key(母号 email / 子号 email)→ 专属住宅代理 URL(同 key 同固定 IP、不同 key 不同 IP)。
     母号用它=每母号一固定 IP;子号导 cookie 用它=每子号一个不同 IP(避免一个 org 几百成员同 IP 批量登录)。
+    ★rotate>0:换一个住宅 session → 换新 IP(遇 429/坏IP 时轮换用)。bestgo 住宅IP共享回收、有些已被 Adobe 烧掉,
+      同号绑到烧了的固定IP会【永远429】,换个IP即绕开(实测 hobert-gweb301 固定IP=429、换IP立即出4000)。
     没配住宅模板则回退全局 configured_proxy。"""
     tpl = _residential_tpl()
     if not tpl:
         return configured_proxy()
+    sid = _sid_of(key if not rotate else "%s#r%d" % (key, rotate))
     try:
-        return tpl.format(sid=_sid_of(key))
+        return tpl.format(sid=sid)
     except Exception:
         return configured_proxy()
 

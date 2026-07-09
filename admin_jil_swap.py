@@ -298,20 +298,22 @@ def run(args):
                 print(f"  [协议导出] {acc['email']} → ❌raw 没解析出密码", flush=True)
                 return acc["email"], ""
             import network_proxy as _np
-            _pxy = _np.proxy_for_id(acc["email"])  # ★每子号专属住宅IP:别用全局proxy(空=直连Adobe、暴露本机IP)
             ck = ""
-            for _r in range(2):  # 普号(权益没传播)再等60s重试一次
-                ck = alp.sub_login_cookie(acc, proxy=_pxy)
-                if not ck:
-                    print(f"  [协议导出] {acc['email']} → ❌登录失败", flush=True)
-                    break
-                q = _quota.query_quota(ck)
+            for _r in range(4):  # ★每次换新住宅IP重试:登录失败多半是绑到被Adobe烧掉的固定IP,换IP即好(实测)
+                _pxy = _np.proxy_for_id(acc["email"], rotate=_r)   # rotate=重试次数 → 每次全新住宅IP
+                got = alp.sub_login_cookie(acc, proxy=_pxy)
+                if not got:
+                    print(f"  [协议导出] {acc['email']} → ❌登录失败(多半绑到被烧IP),换IP重试…", flush=True)
+                    _t.sleep(5)
+                    continue
+                q = _quota.query_quota(got)
                 tot = q.get("total") or 0
-                print(f"  [协议导出] {acc['email']} → cookie {len(ck)}字 积分{q.get('available')}/{tot}", flush=True)
+                print(f"  [协议导出] {acc['email']} → cookie {len(got)}字 积分{q.get('available')}/{tot}", flush=True)
                 if tot > 100:
+                    ck = got   # 企业4000,成功
                     break
-                print(f"  [协议导出] {acc['email']} 还是普号({tot}分=权益没传播),等60s重试", flush=True)
-                _t.sleep(60)
+                print(f"  [协议导出] {acc['email']} 还是普号({tot}分=权益没传播),换IP+等30s重试", flush=True)
+                _t.sleep(30)
             return acc["email"], ck
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.workers)) as ex:

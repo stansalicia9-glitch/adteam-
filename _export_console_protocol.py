@@ -35,8 +35,8 @@ def main():
     ap.add_argument("--accounts", required=True)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--proxy", default="")
-    ap.add_argument("--retry-rounds", type=int, default=2, help="失败号重试轮数(等Firefly权益传播/429冷却;别太多轮,反复重试被限流号=火上浇油)")
-    ap.add_argument("--retry-wait", type=int, default=180, help="每轮之间等待秒数(429账号级限流要几分钟才冷却,75s太短)")
+    ap.add_argument("--retry-rounds", type=int, default=4, help="失败号重试轮数;★每轮换新住宅IP(429多是绑到被烧IP,换IP立即好、不靠等待)")
+    ap.add_argument("--retry-wait", type=int, default=20, help="每轮间隔秒(换IP立即生效不用久等;留点间隔顺带等新号权益传播)")
     args, _ignored = ap.parse_known_args()  # 忽略浏览器版独有参数
 
     base_proxy = (args.proxy or "").strip() or None              # 显式 --proxy 优先(给就全用它)
@@ -55,13 +55,15 @@ def main():
     _mode = "每子号不同住宅IP·限频" if use_resi else ("走代理" if base_proxy else "直连")
     print(f"[协议导出] 共 {len(accts)} 个子号,纯协议导 cookie(并发{workers},零浏览器,{_mode})", flush=True)
 
+    _rot = {"r": 0}   # 当前轮次 → 换住宅IP用:上一轮失败(多半绑到被烧IP)的号,这一轮走全新IP绕开
     def _one(a):
         em = a["email"]
         if not a.get("password"):
             print(f"  [{em}] ❌ 没密码,跳过", flush=True)
             return a, ""
-        time.sleep(random.uniform(1.5, 5.0))                     # ★错峰加大:别一秒一堆同时登录,分散burst防429(429比慢一点更伤)
-        pxy = network_proxy.proxy_for_id(em) if use_resi else (base_proxy or network_proxy.configured_proxy() or None)
+        time.sleep(random.uniform(1.0, 3.5))                     # 轻错峰(429主因是坏IP不是频率,不用大间隔)
+        # ★每子号专属住宅IP;rotate=当前轮次:重试时换新IP,绕开被 Adobe 烧掉的固定IP(429真根因)
+        pxy = network_proxy.proxy_for_id(em, rotate=_rot["r"]) if use_resi else (base_proxy or network_proxy.configured_proxy() or None)
         try:
             ck = alp.sub_login_cookie(a, proxy=pxy)
         except Exception as exc:
@@ -102,13 +104,14 @@ def main():
     pending = list(accts)
     rounds = max(1, int(args.retry_rounds or 1))
     for rnd in range(rounds):
+        _rot["r"] = rnd   # ★这一轮换新住宅IP(rnd>0 时 rotate>0 → 全新IP,绕开上轮绑到的被烧IP)
         if rnd > 0:
             wait = max(0, int(args.retry_wait or 0))
-            # ★先把上一轮成功的落盘,再等——万一在这 180s 等待期间被停掉,已成功的不丢
+            # ★先把上一轮成功的落盘,再等——万一在等待期间被停掉,已成功的不丢
             if results:
                 _flush(results)
                 print(f"[协议导出] 已落盘 {len(results)} 个成功号(等待期间被停也不丢)", flush=True)
-            print(f"[协议导出] 第 {rnd + 1}/{rounds} 轮:{len(pending)} 个失败号等 {wait}s 后重试(等Firefly权益传播/429冷却)…", flush=True)
+            print(f"[协议导出] 第 {rnd + 1}/{rounds} 轮:{len(pending)} 个失败号【换新住宅IP】重试(绕开被烧IP);等 {wait}s…", flush=True)
             time.sleep(wait)
         cur, pending = pending, []
         with cf.ThreadPoolExecutor(max_workers=workers) as ex:
