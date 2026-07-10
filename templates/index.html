@@ -205,7 +205,8 @@
         <button id="btnUnmarkSold" class="sm" title="把勾选的子号取消已售(可重新导出卖)">↩ 取消已售</button>
         <button id="btnDelSel" class="sm" title="从本地清单删掉勾选的死号/幽灵号(换号删不掉的,纯本地、不碰Adobe)" style="background:#5a1d1d;border-color:#7a2a2a">🗑 删除选中</button>
         <button id="btnSwapDry" class="sm">🔍 dry-run选中</button>
-        <button id="btnSwapSel" class="warn" title="换掉选中旧号+加新号+导cookie进本地池(不推adobe,卖号时门禁只导企业号)">⚡ 一键换选中(换+导池,不推adobe)</button>
+        <button id="btnSwapSel" class="warn" title="换掉选中旧号+加新号+导cookie进本地池;勾了右边【推adobe2api】才直接推生产,否则只进本地池由卖号门禁把关">⚡ 一键换选中</button>
+        <label class="muted" style="font-size:12px" title="勾选=换完直接把新号cookie推进生产adobe2api;不勾=只进本地池,卖号时由导出门禁把关(默认不勾更稳)"><input type="checkbox" id="swapPush"> 推adobe2api</label>
         <button id="btnAutoSwap" class="warn">🤖 自动换全部低于阈值</button>
         <label class="muted" style="font-size:12px;margin-left:6px"><input type="checkbox" id="chkAutoLoop"> 🔁 定时(每 <input id="autoInterval" type="number" value="10" min="1" style="width:64px"> 分扫一次)</label>
         <span id="autoLoopStatus" class="muted"></span>
@@ -1107,8 +1108,9 @@ async function doSwap(swaps, dry){
   swaps=(swaps||[]).filter(function(s){return s.console && (s.old||[]).length;});
   var total=swaps.reduce(function(a,s){return a+s.old.length;},0);
   if(!total){ alert('没选中子号(先勾选)'); return; }
-  if(!dry && !confirm('确定【换掉 '+total+' 个子号】?\n\n会:Adobe团队踢掉这些旧子号 + 从邮箱池加等量新子号 + 导出新子号CK 进本地池(不推adobe,卖号时由导出门禁统一把关、只导企业号)。\n旧子号踢出后在adobe2api自动变死号。\n\n建议先点【🔍 dry-run选中】看一遍拟删/拟加,再实换。')) return;
-  var r=await api('/api/console/swap','POST',{swaps:swaps, then_extract:true, push:false, dry_run:!!dry, workers:3});
+  var push = !!(document.getElementById('swapPush') && document.getElementById('swapPush').checked);
+  if(!dry && !confirm('确定【换掉 '+total+' 个子号】?\n\n会:Adobe团队踢掉这些旧子号 + 从邮箱池加等量新子号 + 导出新子号CK 进本地池'+(push?'\n★并【直接推进生产 adobe2api】(你勾了推adobe2api)':'(不推adobe,卖号时由导出门禁统一把关、只导企业号)')+'。\n旧子号踢出后在adobe2api自动变死号。\n\n建议先点【🔍 dry-run选中】看一遍拟删/拟加,再实换。')) return;
+  var r=await api('/api/console/swap','POST',{swaps:swaps, then_extract:true, push:push, dry_run:!!dry, workers:3});
   if(r&&r.ok){ appendLog((dry?'[换号·dry-run] ':'[换号] ')+'已开始('+total+'个),看下方实时日志'+(dry?'(只看不动)':',完成后点🔄刷新所有额度看结果')); }
   else alert((r&&r.msg)||'启动失败');
 }
