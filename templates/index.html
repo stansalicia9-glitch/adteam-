@@ -735,6 +735,7 @@ async function loadAllQuota(){
   // 一键查全部母号下所有子号的额度,汇总成一张表(按可用积分升序,谁该换一眼看出),不用逐个母号点
   const panel=document.getElementById('allQuotaPanel'), tb=document.getElementById('allQuotaBody'), prog=document.getElementById('allQuotaProg');
   panel.style.display='block'; tb.innerHTML=''; panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  try{ await loadSellStats(); }catch(e){}   // ★先刷新'已售'集合,让徽章反映最新推送/导出结果(推送成功=已出库计入已售,但异步完成前端不自动更新)
   const consoles=(_allConsoles||[]).map(c=>c.admin_email||c.name).filter(Boolean);
   const all=[]; let done=0, idx=0, lastRender=0; const CONC=6;
   function maybeRender(force){ const t=Date.now(); if(force||t-lastRender>400){ lastRender=t; _renderAllQuota(all,tb); } }
