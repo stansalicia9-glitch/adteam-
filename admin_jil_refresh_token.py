@@ -46,6 +46,18 @@ def refresh_one(console, proxy):
                     break
                 time.sleep(1)
             last_url = (page.url or "").lower()
+            # ★顺手把 .services.adobe.com 的 session cookie 存进 console(→保存到config)——
+            #   下次 token 过期就能【静默续】(refresh_jil_via_cookie),不用再开浏览器。修"母号有token还开浏览器"。
+            try:
+                _cks = [ck for ck in ctx.cookies() if "services.adobe.com" in (ck.get("domain") or "")]
+                if _cks:
+                    console["admin_session_cookie"] = json.dumps(
+                        [{"name": ck.get("name"), "value": ck.get("value"),
+                          "domain": ck.get("domain") or "", "path": ck.get("path") or "/"} for ck in _cks],
+                        ensure_ascii=False)
+                    print(f"[{tag}] 已存 session cookie({len(_cks)}个,以后token过期可静默续、不再开浏览器)", flush=True)
+            except Exception:
+                pass
         except Exception as exc:
             print(f"[{tag}] 刷新异常: {exc}", flush=True)
         finally:
@@ -97,7 +109,20 @@ def ensure_token(console, proxy, log=_log):
     tag = console.get("name") or console.get("admin_email") or "console"
     if _token_valid(console):
         return console.get("jil_token", ""), False
-    # ★默认【浏览器优先】:复用已播种 session 拦 bps-il 拿 token(不重新登录/不接码,修"登录态已有还重新登录")
+    # ★① 静默续:用存的 session cookie 直接续 token(不开浏览器、不接码)——token过期最优先走这,悄悄续、你感觉不到
+    #    (有 admin_session_cookie 的母号才行;没有的第一次会走②浏览器、并顺手把 cookie 存下,以后就能静默续)
+    try:
+        if console.get("admin_session_cookie"):
+            import admin_login_protocol
+            t = admin_login_protocol.refresh_jil_via_cookie(console, proxy, log=log)
+            if t:
+                console["jil_token"] = t
+                if _token_valid(console):
+                    log(f"[{tag}] ✅ session cookie 静默续到 token(没开浏览器、没接码)")
+                    return t, True
+    except Exception as exc:
+        log(f"[{tag}] 静默续异常 {str(exc)[:60]} → 降级浏览器")
+    # ★② 浏览器复用 session 刷新(顺手存 session cookie 供下次静默续)
     t = refresh_one(console, proxy)
     if t:
         console["jil_token"] = t
