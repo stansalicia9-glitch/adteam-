@@ -8,6 +8,7 @@ import io
 import json
 import sys
 import time
+import uuid
 from urllib.parse import quote
 
 if __name__ == "__main__":  # 只 CLI 时包 utf-8;被 import 时不动调用方 stdout(否则多次包装会关闭 buffer)
@@ -329,15 +330,200 @@ class AdminLogin:
         return access_token
 
 
+_GRAPH_TOKEN_EP = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+
+
+def _graph_token(cid, rt):
+    try:
+        r = requests.post(_GRAPH_TOKEN_EP, data={"client_id": cid, "grant_type": "refresh_token",
+                          "refresh_token": rt, "scope": "https://graph.microsoft.com/.default"}, timeout=25)
+        return r.json().get("access_token", "") if r.status_code == 200 else ""
+    except Exception:
+        return ""
+
+
+def _adobe_code_epoch(iso):
+    from datetime import datetime, timezone
+    try:
+        return datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except Exception:
+        return 0
+
+
+def _read_adobe_code_graph(cid, rt, t0, timeout=120, log=print):
+    """Graph 读 Adobe 单次验证码:只认发码时刻 t0 之后收到的最新一封(否则读到历史旧码→invalid)。"""
+    import re as _re
+    fresh = t0 - 15
+    end = time.time() + timeout
+    while time.time() < end:
+        at = _graph_token(cid, rt)
+        cand = []
+        if at:
+            for folder in ("inbox", "junkemail"):
+                try:
+                    r = requests.get("https://graph.microsoft.com/v1.0/me/mailFolders/%s/messages"
+                                     "?$top=15&$select=subject,body,receivedDateTime,from&$orderby=receivedDateTime desc" % folder,
+                                     headers={"Authorization": "Bearer " + at}, timeout=20)
+                    for m in r.json().get("value", []):
+                        recv = _adobe_code_epoch(m.get("receivedDateTime", ""))
+                        if recv < fresh:
+                            continue
+                        subj = m.get("subject") or ""
+                        body = _re.sub(r"<[^>]+>", " ", (m.get("body") or {}).get("content", "") or "")
+                        frm = (((m.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
+                        if not ("adobe" in frm or "verif" in (subj + body).lower() or "code" in subj.lower()):
+                            continue
+                        mm = (_re.search(r"(?:code|验证码)\D{0,15}(\d{6})", body, _re.I)
+                              or _re.search(r"(?<!\d)(\d{6})(?!\d)", body))
+                        if mm:
+                            cand.append((recv, mm.group(1)))
+                except Exception:
+                    pass
+        if cand:
+            cand.sort()
+            return cand[-1][1]
+        time.sleep(4)
+    return None
+
+
+def protocol_login_direct(console, proxy=None, log=print):
+    """★母号【接码登录】(passwordRecovery credential=code)→ 返回 jil access_token;失败返回 ""。
+    零密码、零浏览器:只用 admin_email + admin_refresh_token(Graph读码)。彻底绕过密码——密码错/被Adobe软锁/
+    微软联合登录号没密码 全不影响。逆向自 Cookie登录导出工具/_adobe_direct.py,选企业ORG_ADMIN profile拿JIL token。
+    实测 charlesbehwffrias 母号端到端通过 bps-il list_organizations。"""
+    email = (console.get("admin_email") or "").strip()
+    rt = console.get("admin_refresh_token") or ""
+    cid = console.get("admin_client_id") or "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
+    if not (email and rt):
+        log("[接码登录] 缺 admin_email/admin_refresh_token")
+        return ""
+    CID = "ONESIE1"
+    RU = "https://adminconsole.adobe.com/"
+    s = requests.Session()
+    if proxy:
+        s.proxies = {"http": proxy, "https": proxy}
+    s.headers.update({"x-ims-clientid": CID, "content-type": "application/json",
+                      "accept": "application/json, text/plain, */*", "accept-language": "en-US,en;q=0.9",
+                      "origin": B, "referer": B + "/", "user-agent": UA})
+
+    def _pull(r):
+        if r.headers.get(STATE_HDR):
+            s.headers[STATE_HDR] = r.headers[STATE_HDR]
+        if r.headers.get(IDV_HDR):
+            s.headers[IDV_HDR] = r.headers[IDV_HDR]
+
+    def _req(m, p, **kw):
+        r = s.request(m, p if p.startswith("http") else B + p, timeout=25, **kw)
+        _pull(r)
+        return r
+
+    try:
+        _req("GET", "/signin/v2/configurations/%s?jslVersion=%s" % (CID, JSL))
+        ra = _req("POST", "/signin/v2/users/accounts?jslVersion=" + JSL,
+                  data=json.dumps({"username": email, "usernameType": "EMAIL"}))
+        if ra.status_code != 200:
+            log("[接码登录] 查号重试 %d" % ra.status_code)
+            return ""
+        b2 = {"extraPbaChecks": False, "pbaPolicy": None, "username": email, "usernameType": "EMAIL",
+              "accountType": "individual", "deviceInfo": {"lsId": str(uuid.uuid4()), "hdId": None}}
+        rs = _req("POST", "/signin/v2/authenticationstate?purpose=passwordRecovery&jslVersion=" + JSL, data=json.dumps(b2))
+        if rs.status_code not in (200, 201):
+            log("[接码登录] 建认证态 %d(429=限流换IP重试)" % rs.status_code)
+            return ""
+        t0 = time.time()
+        rsend = _req("POST", "/signin/v3/challenges?purpose=passwordRecovery&factor=email&extendedAuthState=false&jslVersion=" + JSL, data="{}")
+        if rsend.status_code != 200:
+            log("[接码登录] 发码 %d(429=限流)" % rsend.status_code)
+            return ""
+        code = _read_adobe_code_graph(cid, rt, t0, log=log)
+        if not code:
+            log("[接码登录] Graph读不到Adobe验证码")
+            return ""
+        rtok = _req("POST", "/signin/v3/tokens?credential=code&jslVersion=" + JSL,
+                    data=json.dumps({"purpose": "passwordRecovery", "code": code}))
+        susi = ""
+        try:
+            susi = rtok.json().get("token") or ""
+        except Exception:
+            pass
+        if not susi:
+            log("[接码登录] 验码失败 %d" % rtok.status_code)
+            return ""
+        log("[接码登录] ✅ 接码拿到SUSI(零密码),选企业profile…")
+        # 企业后端:选 ORG_ADMIN profile → ims/tokens → fromSusi → access_token(=jil_token)
+        s.headers["authorization"] = "Bearer " + susi
+        rpf = s.get(B + "/signin/v2/accounts/filtered_profiles?filter=" + quote(PROFILE_FILTER), timeout=20)
+        profs = []
+        try:
+            profs = rpf.json().get("filteredProfiles", [])
+        except Exception:
+            pass
+        if not profs:
+            log("[接码登录] 没企业profile %d(号非org-admin或限流)" % rpf.status_code)
+            return ""
+        ent = profs[0]
+        guid = ent.get("userId")
+        link = ent.get("linkId")
+        s.put(B + "/signin/v1/filterprofilemapping", data=json.dumps({"filter": PROFILE_FILTER, "guid": guid}), timeout=20)
+        if link:
+            s.post(B + "/signin/v1/accounts/tokens", data=json.dumps({"linkId": link}), timeout=20)
+        r3 = s.post(B + "/signin/v1/ims/tokens", data=json.dumps({"rememberMe": True, "reauthenticate": None}), timeout=20)
+        mid = ""
+        try:
+            mid = r3.json().get("token") or ""
+        except Exception:
+            pass
+        if not mid:
+            log("[接码登录] ims/tokens %d 没mid" % r3.status_code)
+            return ""
+        callback = "https://ims-na1.adobelogin.com/ims/adobeid/%s/AdobeID/token?redirect_uri=%s" % (CID, quote(RU, safe=""))
+        form = {"remember_me": "true", "callback": callback, "client_id": CID, "scope": ADMIN_SCOPE, "locale": "en_US",
+                "state": '{"jslibver":"%s","nonce":"9999"}' % JSL, "flow_type": "token", "idp_flow_type": "login",
+                "response_type": "token", "redirect_uri": RU, "use_ms_for_expiry": "true", "flow": "signIn", "token": mid}
+        for k in ("authorization", STATE_HDR, IDV_HDR, "content-type", "x-ims-clientid"):
+            s.headers.pop(k, None)
+        r = s.post("https://adobeid-na1.services.adobe.com/ims/fromSusi", data=form, allow_redirects=True, timeout=30)
+        import re as _re
+        access_token = ""
+        for u in [r.url] + [h.headers.get("location", "") for h in r.history] + [r.text or ""]:
+            mm = _re.search(r"access_token=([^&#\"'\s]+)", u or "")
+            if mm:
+                from urllib.parse import unquote as _uq
+                access_token = _uq(mm.group(1))
+                break
+        if not access_token:
+            log("[接码登录] fromSusi没拿到access_token")
+            return ""
+        log("[接码登录] ✅✅ 零密码拿到 jil_token(%d字)" % len(access_token))
+        # 存 session cookie 供 refresh_jil_via_cookie 静默续
+        try:
+            console["admin_session_cookie"] = json.dumps(
+                [{"name": c.name, "value": c.value, "domain": c.domain, "path": c.path or "/"} for c in s.cookies],
+                ensure_ascii=False)
+        except Exception:
+            pass
+        return access_token
+    except Exception as exc:
+        log("[接码登录] 异常 %s" % str(exc)[:100])
+        return ""
+
+
 def protocol_login(console, proxy=None, log=print):
     """协议登录一个母号 → 返回最终 access_token(jil_token);失败返回 ""。纯 HTTP,不开浏览器、不依赖 admin_profile。
-    需要 console 含 admin_email/admin_password/admin_refresh_token/org_id/product_id。"""
+    ★优先【接码登录】(零密码,绕过密码软锁/联合登录号);失败再退回密码版。需 admin_email + admin_refresh_token(接码),
+    密码版另需 admin_password。"""
     email = (console.get("admin_email") or "").strip()
     pw = console.get("admin_password") or ""
     rtok = console.get("admin_refresh_token") or ""
     cid = console.get("admin_client_id") or "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
     org = console.get("org_id") or ""
     prod = console.get("product_id") or ""
+    # ① 优先接码登录(零密码,最稳):只要有 email + refresh_token
+    if email and rtok:
+        t = protocol_login_direct(console, proxy, log=log)
+        if t:
+            return t
+        log("[协议登录] 接码登录没成 → 退回密码版")
     if not (email and pw and rtok):
         log("[协议登录] 缺凭证(需 admin_email/password/refresh_token)")
         return ""
