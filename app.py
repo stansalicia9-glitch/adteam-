@@ -1639,5 +1639,6 @@ if __name__ == "__main__":
                 print("[定时换号] 已恢复:每 %ds 换 <%d 分" % (_AUTOSWAP["interval"], _AUTOSWAP["threshold"]), flush=True)
     except Exception as _e:
         print("[定时换号] 恢复失败 %s" % _e, flush=True)
-    print(f"Web 控制台启动： http://127.0.0.1:{port}", flush=True)
-    app.run(host="127.0.0.1", port=port, threaded=True, debug=False)
+    host = os.environ.get("HOST", "127.0.0.1")   # 服务器公网部署设 HOST=0.0.0.0(务必配 panel_auth.json 门禁)
+    print(f"Web 控制台启动： http://{host}:{port}", flush=True)
+    app.run(host=host, port=port, threaded=True, debug=False)
