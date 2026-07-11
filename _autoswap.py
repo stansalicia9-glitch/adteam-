@@ -18,6 +18,22 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 
 def scan_low(threshold, workers=12):
     cc = json.load(open(os.path.join(BASE, "console_children.json"), encoding="utf-8")).get("consoles", {})
+    # ★只扫【当前配置里的母号】的子号——console_children 累积了历史所有母号(换掉/删掉的旧母号还留着),
+    #   不过滤会扫几百个旧号/死号(慢 + 对Adobe打几百次查积分触发429)。按当前 admin_console_config 的母号裁剪。
+    try:
+        import admin_console_manage as acm
+        _cfg, _cons = acm._load_consoles()
+        cur = set()
+        for _c in _cons:
+            for _k in (_c.get("admin_email"), _c.get("name")):
+                if _k:
+                    cur.add(str(_k).strip().lower())
+        _before = len(cc)
+        cc = {con: kids for con, kids in cc.items() if str(con).strip().lower() in cur}
+        if _before != len(cc):
+            print("[autoswap] 只扫当前 %d 个母号(console_children 里 %d 个含历史旧母号,已跳过旧的)" % (len(cc), _before), flush=True)
+    except Exception as _e:
+        print("[autoswap] 裁剪当前母号失败(扫全部):%s" % str(_e)[:60], flush=True)
     ck = json.load(open(os.path.join(BASE, "firefly_adobe2api_cookies.json"), encoding="utf-8"))
     items = ck.get("items", ck) if isinstance(ck, dict) else ck
     ckmap = {str(i.get("name", "")).strip().lower(): (i.get("cookie") or "") for i in items}
