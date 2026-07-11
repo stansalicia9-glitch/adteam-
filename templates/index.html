@@ -158,8 +158,8 @@
     <details style="margin-top:8px">
       <summary style="cursor:pointer;color:#58a6ff;font-weight:600">📋 母号号池(账密可复制 · 改密/换RT后实时更新)</summary>
       <div class="row" style="align-items:center;gap:10px;margin:6px 0">
-        <button id="btnPoolRefresh" class="sm">🔄 刷新号池</button>
-        <button id="btnPoolCopy" class="sm primary">📋 复制全部账密</button>
+        <button id="btnPoolRefresh" class="sm" onclick="loadAdminPool()">🔄 刷新号池</button>
+        <button id="btnPoolCopy" class="sm primary" onclick="copyAdminPool()">📋 复制全部账密</button>
         <span id="poolStat" class="muted" style="font-size:12px">点【刷新号池】加载</span>
       </div>
       <div style="overflow-x:auto"><table id="poolTable" style="width:auto;border-collapse:collapse;font-size:12px"></table></div>
@@ -1019,8 +1019,9 @@ $('#btnRawSave').onclick=async()=>{
 // ---- 母号号池(账密可复制,改密/换RT后实时更新)----
 async function loadAdminPool(){
   const st=document.getElementById('poolStat');
+  st.textContent='加载中…';   // ★点了立刻有反应:还停在这=fetch卡住;变'共N个'=成功
   try{
-    const r=await (await fetch('/api/admin/pool')).json();
+    const r=await (await fetch('/api/admin/pool',{cache:'no-store'})).json();
     if(!r.ok){ st.textContent='加载失败:'+(r.msg||''); return; }
     const esc=s=>String(s==null?'':s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
     const th='<tr style="color:#8b949e"><th style="padding:3px 8px;text-align:left">母号邮箱</th><th style="padding:3px 8px">Adobe密码</th><th style="padding:3px 8px">邮箱密码</th><th style="padding:3px 8px">RT</th><th style="padding:3px 8px">org</th><th style="padding:3px 8px">席位</th></tr>';
@@ -1036,15 +1037,13 @@ async function loadAdminPool(){
     st.textContent='共 '+r.count+' 个母号(改密/换RT后点刷新即更新)';
   }catch(e){ st.textContent='异常:'+e; }
 }
-(function(){
-  const br=document.getElementById('btnPoolRefresh'); if(br) br.onclick=loadAdminPool;
-  const bc=document.getElementById('btnPoolCopy'); if(bc) bc.onclick=()=>{
-    const t=document.getElementById('poolCopyText'); if(!t.value){ loadAdminPool(); return; }
-    t.select(); try{ document.execCommand('copy'); }catch(e){}
-    if(navigator.clipboard) navigator.clipboard.writeText(t.value).catch(()=>{});
-    bc.textContent='✅已复制'; setTimeout(()=>bc.textContent='📋 复制全部账密',1500);
-  };
-})();
+function copyAdminPool(){
+  const t=document.getElementById('poolCopyText'); if(!t || !t.value){ loadAdminPool(); return; }
+  t.select(); try{ document.execCommand('copy'); }catch(e){}
+  if(navigator.clipboard) navigator.clipboard.writeText(t.value).catch(()=>{});
+  const bc=document.getElementById('btnPoolCopy'); if(bc){ bc.textContent='✅已复制'; setTimeout(()=>bc.textContent='📋 复制全部账密',1500); }
+}
+window.loadAdminPool=loadAdminPool; window.copyAdminPool=copyAdminPool;  // 确保内联onclick能找到
 
 // ---- 导出 Cookie ----
 $('#btnExtract').onclick=async()=>{
