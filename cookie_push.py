@@ -292,7 +292,10 @@ def _push_now(console_email, accounts, expected_count=None, cfg=None, record_id=
         }
         try:
             # (连接10s, 读取180s)：服务器导入+校验一批CK常>20s，读超时太短会把成功的推送误判失败
-            resp = requests.post(cfg["api_url"], headers=headers, json=payload, timeout=(10, 180))
+            # ★proxies={http/https:None} 强制直连,绕开本机 HTTP_PROXY 环境变量(VPN/clash)——
+            #   推 adobe2api(公网IP)本就该直连,走VPN代理会"Invalid HTTP request received"(尤其TUN关了代理死)
+            resp = requests.post(cfg["api_url"], headers=headers, json=payload, timeout=(10, 180),
+                                 proxies={"http": None, "https": None})
             last_http = resp.status_code
             try:
                 body = resp.json()
