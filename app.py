@@ -1443,6 +1443,32 @@ def api_jil_refresh():
     return jsonify({"ok": ok, "msg": msg})
 
 
+@app.route("/api/admin/pool")
+def api_admin_pool():
+    """母号号池:实时从 config 读全部母号账密(改密/换RT后立刻更新),供查看+直接复制。
+    返回 rows(结构化,含org/席位/子号数)+ copy_lines(可复制:邮箱----Adobe密码----邮箱密码----cid----RT)。"""
+    import admin_console_manage as _acm
+    try:
+        d = json.load(open(_acm.CONFIG_FILE, encoding="utf-8-sig"))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": "读config失败:%s" % str(e)[:60]})
+    rows, lines = [], []
+    for c in d.get("consoles", []):
+        em = c.get("admin_email") or ""
+        if not em:
+            continue
+        adobe_pw = c.get("admin_password") or ""
+        mail_pw = c.get("admin_password_alt") or ""
+        cid = c.get("admin_client_id") or ""
+        rt = c.get("admin_refresh_token") or ""
+        rows.append({"name": c.get("name") or "", "email": em, "adobe_password": adobe_pw,
+                     "email_password": mail_pw, "client_id": cid, "has_rt": bool(rt), "rt_len": len(rt),
+                     "org_id": c.get("org_id") or "", "seats": c.get("seats"),
+                     "seeded": bool(_acm._is_seeded_marker(c) if hasattr(_acm, "_is_seeded_marker") else False)})
+        lines.append("----".join([em, adobe_pw, mail_pw, cid, rt]))
+    return jsonify({"ok": True, "count": len(rows), "rows": rows, "copy_text": "\n".join(lines)})
+
+
 @app.route("/api/admin/security", methods=["POST"])
 def api_admin_security():
     """母号安全处置(后台任务):协议改Adobe密码+全局登出 / 全自动换RT / 两者。零手动。

@@ -155,6 +155,17 @@
         <tbody></tbody>
       </table>
     </div>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;color:#58a6ff;font-weight:600">📋 母号号池(账密可复制 · 改密/换RT后实时更新)</summary>
+      <div class="row" style="align-items:center;gap:10px;margin:6px 0">
+        <button id="btnPoolRefresh" class="sm">🔄 刷新号池</button>
+        <button id="btnPoolCopy" class="sm primary">📋 复制全部账密</button>
+        <span id="poolStat" class="muted" style="font-size:12px">点【刷新号池】加载</span>
+      </div>
+      <div style="overflow-x:auto"><table id="poolTable" style="width:auto;border-collapse:collapse;font-size:12px"></table></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">复制格式:<code>邮箱----Adobe密码----邮箱密码----client_id----RT</code>(每行一个母号)</div>
+      <textarea id="poolCopyText" rows="4" spellcheck="false" style="margin-top:4px;font-size:11px" placeholder="点【刷新号池】后这里是可复制的账密行"></textarea>
+    </details>
     <details>
       <summary>编辑管理员列表 (原始 JSON)</summary>
       <p class="muted">consoles 数组，每项：name / admin_email / admin_password(Adobe密码,col3) / admin_refresh_token / admin_client_id / product_users_url / keep_admin_emails</p>
@@ -1004,6 +1015,36 @@ $('#btnRawSave').onclick=async()=>{
   let obj; try{ obj=JSON.parse($('#cfgRaw').value); }catch(e){ alert('JSON 格式错误: '+e); return; }
   await api('/api/consoles/save','POST',obj); alert('已保存整个配置'); loadConsoles();
 };
+
+// ---- 母号号池(账密可复制,改密/换RT后实时更新)----
+async function loadAdminPool(){
+  const st=document.getElementById('poolStat');
+  try{
+    const r=await (await fetch('/api/admin/pool')).json();
+    if(!r.ok){ st.textContent='加载失败:'+(r.msg||''); return; }
+    const esc=s=>String(s==null?'':s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+    const th='<tr style="color:#8b949e"><th style="padding:3px 8px;text-align:left">母号邮箱</th><th style="padding:3px 8px">Adobe密码</th><th style="padding:3px 8px">邮箱密码</th><th style="padding:3px 8px">RT</th><th style="padding:3px 8px">org</th><th style="padding:3px 8px">席位</th></tr>';
+    const rows=(r.rows||[]).map(x=>`<tr style="border-top:1px solid #1d2430">
+      <td style="padding:3px 8px">${esc(x.email)}</td>
+      <td style="padding:3px 8px;font-family:monospace;color:#e3b341;user-select:all">${esc(x.adobe_password)||'<span style="color:#666">—</span>'}</td>
+      <td style="padding:3px 8px;font-family:monospace;color:#7ee787;user-select:all">${esc(x.email_password)||'<span style="color:#666">—</span>'}</td>
+      <td style="padding:3px 8px">${x.has_rt?('✅'+x.rt_len+'字'):'<span style="color:#f85149">❌无</span>'}</td>
+      <td style="padding:3px 8px;color:#666;font-size:11px">${esc((x.org_id||'').slice(0,14))}</td>
+      <td style="padding:3px 8px;text-align:center">${x.seats==null?'':esc(x.seats)}</td></tr>`).join('');
+    document.getElementById('poolTable').innerHTML=th+rows;
+    document.getElementById('poolCopyText').value=r.copy_text||'';
+    st.textContent='共 '+r.count+' 个母号(改密/换RT后点刷新即更新)';
+  }catch(e){ st.textContent='异常:'+e; }
+}
+(function(){
+  const br=document.getElementById('btnPoolRefresh'); if(br) br.onclick=loadAdminPool;
+  const bc=document.getElementById('btnPoolCopy'); if(bc) bc.onclick=()=>{
+    const t=document.getElementById('poolCopyText'); if(!t.value){ loadAdminPool(); return; }
+    t.select(); try{ document.execCommand('copy'); }catch(e){}
+    if(navigator.clipboard) navigator.clipboard.writeText(t.value).catch(()=>{});
+    bc.textContent='✅已复制'; setTimeout(()=>bc.textContent='📋 复制全部账密',1500);
+  };
+})();
 
 // ---- 导出 Cookie ----
 $('#btnExtract').onclick=async()=>{
