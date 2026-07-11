@@ -1443,6 +1443,23 @@ def api_jil_refresh():
     return jsonify({"ok": ok, "msg": msg})
 
 
+@app.route("/api/admin/security", methods=["POST"])
+def api_admin_security():
+    """母号安全处置(后台任务):协议改Adobe密码+全局登出 / 全自动换RT / 两者。零手动。
+    body:{console(邮箱/名称/逗号分隔/'all'), action:change-password|refresh-rt|both}。"""
+    body = request.get_json(force=True, silent=True) or {}
+    console = str(body.get("console") or "").strip()
+    action = str(body.get("action") or "change-password").strip()
+    if action not in ("change-password", "refresh-rt", "both"):
+        return jsonify({"ok": False, "msg": "action 非法"})
+    sel_list = body.get("consoles") or []
+    target = ",".join(str(x) for x in sel_list) if sel_list else (console or "all")
+    args = ["admin_security.py", "--console", target, "--action", action]
+    label = {"change-password": "改Adobe密码+全局登出", "refresh-rt": "全自动换RT", "both": "改密+换RT"}[action]
+    ok, msg = TASK.start(py_cmd(*args), f"{label}: {target}")
+    return jsonify({"ok": ok, "msg": msg})
+
+
 @app.route("/api/extract/console", methods=["POST"])
 def api_extract_console():
     body = request.get_json(force=True, silent=True) or {}

@@ -829,6 +829,8 @@ async function loadConsoles(){
         <button class="sm" data-act="seed" data-sel="${sel}">手动登录</button>
         <button class="sm" data-act="jil_test" data-sel="${sel}">登录母号</button>
         <button class="sm" data-act="jil_refresh" data-sel="${sel}">刷新Token</button>
+        <button class="sm" data-act="sec_pw" data-sel="${sel}" title="协议改Adobe密码+全局登出(踢入侵者所有在线会话),零手动。怀疑被人登录删号时用" style="background:#5a1d1d;border-color:#7a2a2a">🔒改密+登出</button>
+        <button class="sm" data-act="sec_rt" data-sel="${sel}" title="全自动换refresh_token(用存的邮箱密码登录MS→授权Graph拿新RT),零手动。手动改完邮箱密码后点它恢复接码" style="background:#3a2a52;border-color:#553a7a">🔄换RT</button>
         <button class="sm" data-act="jil_dry" data-sel="${sel}">扫描子号</button>
         <button class="sm warn" data-act="jil_run" data-sel="${sel}">删加子号</button>
         <button class="sm primary" data-act="extract_console" data-sel="${sel}">导出子号CK</button>
@@ -877,6 +879,20 @@ async function loadConsoles(){
         b.textContent='刷新Token'; b.disabled=false;
         if(!r.ok) alert(r.msg);
         else appendLog(`[刷新Token] ${sel} 已用已播种 session 抓新 Bearer，看日志确认；完后点"登录母号"验证`);
+      }
+      else if(act==='sec_pw'){
+        if(!confirm(`【${sel}】协议改 Adobe 密码 + 全局登出？\n\n零手动:接码改新Adobe密码并踢掉该号所有在线会话(含入侵者)。新密码会存进config、日志里能看到。\n怀疑被人登录删你子号时用这个。确定?`)) return;
+        b.textContent='改密中…'; b.disabled=true;
+        const r=await api('/api/admin/security','POST',{console:sel, action:'change-password'});
+        b.textContent='🔒改密+登出'; b.disabled=false;
+        if(!r.ok) alert(r.msg); else appendLog(`[🔒改密+登出] ${sel} 已开始(接码改Adobe密码+踢会话),看日志拿新密码`);
+      }
+      else if(act==='sec_rt'){
+        if(!confirm(`【${sel}】全自动换 refresh_token?\n\n零手动:用存的邮箱密码(admin_password_alt)登录微软→授权Graph拿新RT→写回config。\n手动在account.live.com改完邮箱密码后,点它恢复接码。确定?`)) return;
+        b.textContent='换RT中…'; b.disabled=true;
+        const r=await api('/api/admin/security','POST',{console:sel, action:'refresh-rt'});
+        b.textContent='🔄换RT'; b.disabled=false;
+        if(!r.ok) alert(r.msg); else appendLog(`[🔄换RT] ${sel} 已开始(密码登录MS→授权Graph拿新RT),看日志`);
       }
       else if(act==='del'){
         if(!confirm(`确定删除母号【${sel}】？(只从配置移除，不影响已加入团队的子号)`)) return;
