@@ -636,16 +636,134 @@ def _cfworker_code_fn(email):
     return fn
 
 
+_SUB_COOKIE_WANT = ("ims_sid", "aux_sid", "relay", "fg", "gds", "filter-profile-map",
+                    "filter-profile-map-permanent_prod", "filter-profile-map-permanent", "ftrset", "idg_token", "arid", "locale")
+
+
+def sub_login_cookie_direct(account, proxy=None, log=print):
+    """★子号【接码登录】(passwordRecovery,零密码)→ Firefly企业profile → 导出登录态 cookie。失败返回 ""。
+    只用 email + refresh_token(Graph读码),绕过密码(密码错/软锁/联合登录号都不影响)。选企业profile(linkId非personal)拿4000那套。
+    实测 particiaqvt-fanita 零密码出 2296字含ims_sid、企业4000。"""
+    email = (account.get("email") or "").strip()
+    rt = account.get("refresh_token") or ""
+    cid = account.get("client_id") or "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
+    if not (email and rt):
+        return ""
+    CID = "clio-playground-web"
+    RU = "https://firefly.adobe.com/"
+    s = requests.Session()
+    if proxy:
+        s.proxies = {"http": proxy, "https": proxy}
+    s.headers.update({"x-ims-clientid": CID, "content-type": "application/json",
+                      "accept": "application/json, text/plain, */*", "accept-language": "en-US,en;q=0.9",
+                      "origin": B, "referer": B + "/", "user-agent": UA})
+
+    def _pull(r):
+        if r.headers.get(STATE_HDR):
+            s.headers[STATE_HDR] = r.headers[STATE_HDR]
+        if r.headers.get(IDV_HDR):
+            s.headers[IDV_HDR] = r.headers[IDV_HDR]
+
+    def _req(m, p, **kw):
+        r = s.request(m, p if p.startswith("http") else B + p, timeout=25, **kw)
+        _pull(r)
+        return r
+
+    try:
+        _req("GET", "/signin/v2/configurations/%s?jslVersion=%s" % (CID, JSL))
+        ra = _req("POST", "/signin/v2/users/accounts?jslVersion=" + JSL,
+                  data=json.dumps({"username": email, "usernameType": "EMAIL"}))
+        if ra.status_code != 200:
+            log("[子号接码] 查号重试 %d" % ra.status_code)
+            return ""
+        b2 = {"extraPbaChecks": False, "pbaPolicy": None, "username": email, "usernameType": "EMAIL",
+              "accountType": "individual", "deviceInfo": {"lsId": str(uuid.uuid4()), "hdId": None}}
+        rs = _req("POST", "/signin/v2/authenticationstate?purpose=passwordRecovery&jslVersion=" + JSL, data=json.dumps(b2))
+        if rs.status_code not in (200, 201):
+            log("[子号接码] 建认证态 %d(429=换IP重试)" % rs.status_code)
+            return ""
+        t0 = time.time()
+        rsend = _req("POST", "/signin/v3/challenges?purpose=passwordRecovery&factor=email&extendedAuthState=false&jslVersion=" + JSL, data="{}")
+        if rsend.status_code != 200:
+            log("[子号接码] 发码 %d" % rsend.status_code)
+            return ""
+        code = _read_adobe_code_graph(cid, rt, t0, log=log)
+        if not code:
+            log("[子号接码] Graph读不到码")
+            return ""
+        rtok = _req("POST", "/signin/v3/tokens?credential=code&jslVersion=" + JSL,
+                    data=json.dumps({"purpose": "passwordRecovery", "code": code}))
+        susi = ""
+        try:
+            susi = rtok.json().get("token") or ""
+        except Exception:
+            pass
+        if not susi:
+            log("[子号接码] 验码失败 %d" % rtok.status_code)
+            return ""
+        # Firefly企业后端:宽松filter选【企业profile(有linkId非personal)→4000】
+        s.headers["authorization"] = "Bearer " + susi
+        pf = '{"fallbackToAA":true}'
+        rpf = s.get(B + "/signin/v2/accounts/filtered_profiles?filter=" + quote(pf), timeout=20)
+        profs = []
+        try:
+            profs = rpf.json().get("filteredProfiles", [])
+        except Exception:
+            pass
+        ent = (next((p for p in profs if p.get("linkId") and "personal" not in (p.get("description") or "").lower()), None)
+               or next((p for p in profs if p.get("linkId")), None))
+        if not ent:
+            # ★选不到企业profile(权益没传播/限流)→ 绝不退选personal(普号10废cookie),返回空让上层换IP/等传播重试
+            log("[子号接码] 没企业profile %d(权益没传播/限流,不退personal)" % rpf.status_code)
+            return ""
+        s.put(B + "/signin/v1/filterprofilemapping", data=json.dumps({"filter": pf, "guid": ent.get("userId")}), timeout=20)
+        if ent.get("linkId"):
+            s.post(B + "/signin/v1/accounts/tokens", data=json.dumps({"linkId": ent.get("linkId")}), timeout=20)
+        r3 = s.post(B + "/signin/v1/ims/tokens", data=json.dumps({"rememberMe": True, "reauthenticate": None}), timeout=20)
+        mid = ""
+        try:
+            mid = r3.json().get("token") or ""
+        except Exception:
+            pass
+        if not mid:
+            log("[子号接码] ims/tokens %d 没mid" % r3.status_code)
+            return ""
+        callback = "https://ims-na1.adobelogin.com/ims/adobeid/%s/AdobeID/token?redirect_uri=%s" % (CID, quote(RU, safe=""))
+        form = {"remember_me": "true", "callback": callback, "client_id": CID, "scope": FIREFLY_SCOPE, "locale": "en_US",
+                "state": '{"jslibver":"%s","nonce":"9999"}' % JSL, "flow_type": "token", "idp_flow_type": "login",
+                "response_type": "token", "redirect_uri": RU, "use_ms_for_expiry": "true", "flow": "signIn", "token": mid}
+        for k in ("authorization", STATE_HDR, IDV_HDR, "content-type", "x-ims-clientid"):
+            s.headers.pop(k, None)
+        s.post("https://adobeid-na1.services.adobe.com/ims/fromSusi", data=form, allow_redirects=True, timeout=30)
+        got = {c.name: c.value for c in s.cookies if c.name in _SUB_COOKIE_WANT}
+        ck = "; ".join("%s=%s" % (k, v) for k, v in got.items())
+        if "ims_sid" not in got:
+            log("[子号接码] fromSusi没种到ims_sid")
+            return ""
+        log("[子号接码] ✅ 零密码拿到企业cookie %d字" % len(ck))
+        return ck
+    except Exception as exc:
+        log("[子号接码] 异常 %s" % str(exc)[:100])
+        return ""
+
+
 def sub_login_cookie(account, proxy=None, log=print):
     """子号协议登录 Firefly → 导出登录态 cookie(给 adobe2api cookie-replay 查积分)。失败返回 ""。
     account: {email, password, [refresh_token, client_id]} —— 有 refresh_token 走 outlook 拿码,否则 cloudflare worker。
+    ★优先【接码登录】(零密码,有RT时):绕过密码错/软锁/联合登录号;失败再退回密码版。
     ★用 Firefly 上下文(clio-playground-web)登录,filtered_profiles 才返回企业 profile(团队号),拿到 4000 那套登录态。"""
     email = (account.get("email") or "").strip()
     pw = account.get("password") or ""
-    if not (email and pw):
-        log("[子号协议] 缺 email/password")
-        return ""
     rt = account.get("refresh_token") or ""
+    # ① 优先接码登录(零密码,最稳):只要有 email + refresh_token
+    if email and rt:
+        ck = sub_login_cookie_direct(account, proxy, log=log)
+        if ck:
+            return ck
+        log("[子号协议] 接码没成 → 退回密码版")
+    if not (email and pw):
+        log("[子号协议] 缺 email/password(且接码不可用)")
+        return ""
     mail_cid = account.get("client_id") or "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
     mail_fn = _outlook_code_fn(rt, mail_cid) if rt else _cfworker_code_fn(email)
     try:
