@@ -4,6 +4,14 @@
 启动：python app.py  ->  http://127.0.0.1:5005
 """
 import os
+
+# ★清掉本机 VPN/clash 的 HTTP_PROXY 环境变量(在任何 requests 之前):
+#   FF 出图/接码/推送用的是【代码里指定的住宅代理】(network_proxy),不该走这个系统代理。
+#   VPN/TUN 关了但 env 还留着时,bare requests(Graph读验证码/推adobe2api)会走那个死代理→连不上/卡住。
+#   清掉让所有未显式指定代理的请求直连;显式住宅代理(Adobe出图/接码)不受影响。子进程继承此清理后的env。
+for _pv in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
+    os.environ.pop(_pv, None)
+
 import re
 import sys
 import json
