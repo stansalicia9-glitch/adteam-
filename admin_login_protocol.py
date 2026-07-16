@@ -227,6 +227,19 @@ class AdminLogin:
             if link_id:  # 有 linkId(企业/团队 profile)才 accounts/tokens;personal 无 linkId 跳过
                 r2 = self.s.post(B + "/signin/v1/accounts/tokens", data=json.dumps({"linkId": link_id}))
                 print("[accounts/tokens] %s | %s" % (r2.status_code, (r2.text or "")[:120]), flush=True)
+                # ★2026-07-16 修 ims/tokens 401 invalid_token(子号全导成普号/导入403 的真因):
+                #   SUSI/password token 绑的是【个人 AdobeID】(sub=…@AdobeID);accounts/tokens 用 linkId
+                #   换回的才是【企业 profile 上下文】token(sub=…@…e)。ims/tokens 必须用企业 token,
+                #   否则 Adobe 判 Invalid JWT→401→mid空→access_token空→cookie 只剩非鉴权项→误判普号。
+                #   仅子号(want=cookie)flow 换头;母号(want=token)保持原逻辑不动,免回归。
+                if want == "cookie":
+                    try:
+                        _ent_tok = r2.json().get("token") or ""
+                    except Exception:
+                        _ent_tok = ""
+                    if _ent_tok:
+                        self.s.headers["authorization"] = "Bearer " + _ent_tok
+                        print("[ims/tokens] ★换用 accounts/tokens 企业 token(修 401 invalid_token→4000)", flush=True)
         else:
             print("[profile] 没有可选 profile", flush=True)
         r3 = self.s.post(B + "/signin/v1/ims/tokens", data=json.dumps({"rememberMe": True, "reauthenticate": None}))
@@ -718,7 +731,15 @@ def sub_login_cookie_direct(account, proxy=None, log=print):
             return ""
         s.put(B + "/signin/v1/filterprofilemapping", data=json.dumps({"filter": pf, "guid": ent.get("userId")}), timeout=20)
         if ent.get("linkId"):
-            s.post(B + "/signin/v1/accounts/tokens", data=json.dumps({"linkId": ent.get("linkId")}), timeout=20)
+            _rat = s.post(B + "/signin/v1/accounts/tokens", data=json.dumps({"linkId": ent.get("linkId")}), timeout=20)
+            # ★2026-07-16 修 ims/tokens 401 invalid_token:accounts/tokens 返回的才是【企业 profile 上下文】token,
+            #   susi(接码)token 绑个人 AdobeID,ims/tokens 用它→Invalid JWT→401→没mid→空cookie误判普号。换成企业token。
+            try:
+                _ent_tok = _rat.json().get("token") or ""
+            except Exception:
+                _ent_tok = ""
+            if _ent_tok:
+                s.headers["authorization"] = "Bearer " + _ent_tok
         r3 = s.post(B + "/signin/v1/ims/tokens", data=json.dumps({"rememberMe": True, "reauthenticate": None}), timeout=20)
         mid = ""
         try:
