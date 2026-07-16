@@ -135,7 +135,7 @@ def _delete_dead(dead, emit):
     emit("   已从本地池删除 %d 个不可用号" % len(dead), flush=True)
 
 
-def run(workers=12, dry_run=False, action="swap", export_delay=180, swap_workers=3, emit=print):
+def run(workers=12, dry_run=False, action="swap", export_delay=0, swap_workers=3, emit=print):
     proxy = network_proxy.configured_proxy() or None
     tasks = _scan_tasks()
     act_label = "换号" if action == "swap" else "清号"
@@ -217,7 +217,7 @@ def main():
     ap.add_argument("--workers", type=int, default=12, help="探测并发")
     ap.add_argument("--dry-run", action="store_true", help="只探不动,先看会处理哪些")
     ap.add_argument("--action", choices=["swap", "delete"], default="swap", help="swap=不可用号换号(默认);delete=从本地池删")
-    ap.add_argument("--export-delay", type=int, default=180, help="换号后等N秒导出(等权益传播)")
+    ap.add_argument("--export-delay", type=int, default=0, help="换号后等N秒导出(等权益传播;默认0=不干等,靠每号普号重试兜底)")
     ap.add_argument("--swap-workers", type=int, default=3, help="换号子流程并发")
     a = ap.parse_args()
     return run(workers=a.workers, dry_run=a.dry_run, action=a.action,

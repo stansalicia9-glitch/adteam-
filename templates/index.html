@@ -1126,7 +1126,7 @@ loadCounts(); loadPool(); loadConsoles(); loadRaw(); loadPushConfig(); loadPushR
   var as=document.getElementById('btnAutoSwap'); if(as) as.onclick=function(){
     var th=parseInt((document.getElementById('quotaThresh')||{}).value)||100;
     if(!confirm('🤖 全自动换号:扫所有子号,把【可用积分 <'+th+' 分】的全部换掉\n(删旧+池里加新+等权益+导出新号CK+只推新号进adobe),会真改Adobe团队+推adobe,后台跑。确定?')) return;
-    api('/api/console/autoswap','POST',{threshold:th, workers:3, export_delay:90}).then(function(r){
+    api('/api/console/autoswap','POST',{threshold:th, workers:3, export_delay:0}).then(function(r){
       if(r&&r.ok) appendLog('[全自动换号] 已开始(换<'+th+'分),看下方实时日志;完成后点🔄刷新所有额度');
       else alert((r&&r.msg)||'启动失败');
     });

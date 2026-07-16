@@ -273,13 +273,17 @@ def run(args):
         import concurrent.futures
         import admin_login_protocol as alp
         import _quota
-        delay = max(0, int(getattr(args, "export_delay", 180)))
+        delay = max(0, int(getattr(args, "export_delay", 0)))
         if delay:
             # ★新号刚加进团队 firefly 权益没传播到位时,Firefly 上下文 filtered_profiles 还没企业profile
             #   → 只能拿到 personal(普号10分废cookie);隔几分钟权益传播后才有企业框→4000。
-            #   等 delay 让它传播;下面每号还带"普号→等60s重试"兜底;就算全没传播也不丢号,随时再【协议全流程导入】补。
+            #   等 delay 让它传播;下面每号还带"普号→等30s重试"兜底;就算全没传播也不丢号,随时再【协议全流程导入】补。
             print(f"#### 等 {delay}s 让新号 firefly 团队权益传播(没传播会导到普号10分,带重试兜底) ####", flush=True)
             _t.sleep(delay)
+        else:
+            # delay=0:不做上来干等,直接进每号轮询(下面 _exp 自带"普号→换IP+等30s重试"最多7轮,
+            #   已传播的号秒出,慢号靠轮询边导边等,把原来整批干等的时间挪进按需轮询)。
+            print("#### 不等待:直接进每号导出,普号自动换IP+等30s重试(最多7轮≈180s)兜底 ####", flush=True)
 
         def _acc_of(a):
             raw = str(a.get("raw") or "")
@@ -299,7 +303,7 @@ def run(args):
                 return acc["email"], ""
             import network_proxy as _np
             ck = ""
-            for _r in range(4):  # ★每次换新住宅IP重试:登录失败多半是绑到被Adobe烧掉的固定IP,换IP即好(实测)
+            for _r in range(7):  # ★每次换新住宅IP重试:登录失败多半绑到被烧IP,换IP即好;也兜"普号→权益没传播"→等30s重试(7轮≈180s,接住干等砍0后的传播尾)
                 _pxy = _np.proxy_for_id(acc["email"], rotate=_r)   # rotate=重试次数 → 每次全新住宅IP
                 got = alp.sub_login_cookie(acc, proxy=_pxy)
                 if not got:
@@ -387,7 +391,7 @@ def parse_args(argv):
     ap.add_argument("--dry-run", action="store_true", help="只看拟删/拟加,不实际操作(强烈建议先跑)")
     ap.add_argument("--then-extract", action="store_true", help="换完导出新子号CK + 逐母号推adobe")
     ap.add_argument("--no-push", action="store_true", help="配合--then-extract:只导cookie进本地池、不推adobe(推送交给导出门禁)")
-    ap.add_argument("--export-delay", type=int, default=180, help="加新号后等N秒再导出(等firefly权益传播,默认180;真正兜底是3轮重跑,短了也丢不了号)")
+    ap.add_argument("--export-delay", type=int, default=0, help="加新号后等N秒再导出(等firefly权益传播;默认0=不干等,靠每号'普号→换IP等30s重试'最多7轮≈180s兜底,已传播的号秒出)")
     ap.add_argument("--workers", type=int, default=3, help="子号导出CK的并发")
     ap.add_argument("--console-workers", type=int, default=3, help="母号级并发:阶段1同时预登录几个母号(默认3,换号提速)")
     ap.add_argument("--throttle", action="store_true", help="限速错峰(全自动监控用):母号串行预登录+母号间30~90s随机间隔+删加间隔15s,拟人节奏防风控")

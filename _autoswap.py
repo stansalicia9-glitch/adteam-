@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """全自动换低分号:扫所有子号额度 → 找 <阈值(默认100)分 → 自动删旧+加新+导出+只推新号(调 admin_jil_swap)。
-用法: python _autoswap.py [--threshold 100] [--limit N] [--dry-run] [--workers 3] [--export-delay 90]
+用法: python _autoswap.py [--threshold 100] [--limit N] [--dry-run] [--workers 3] [--export-delay 0]
 死号(cookie失效)不在这里换(token查不出额度);这里只换"有效但可用积分<阈值"的。
 """
 import argparse
@@ -64,7 +64,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="只换前N个(0=全部)")
     ap.add_argument("--dry-run", action="store_true", help="只看会换哪些,不实际操作")
     ap.add_argument("--workers", type=int, default=3)
-    ap.add_argument("--export-delay", type=int, default=180)
+    ap.add_argument("--export-delay", type=int, default=0)
     a = ap.parse_args()
 
     low = scan_low(a.threshold)

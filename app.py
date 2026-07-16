@@ -1008,7 +1008,7 @@ def api_console_autoswap():
     dry = bool(body.get("dry_run"))
     args = ["_autoswap.py", "--threshold", str(threshold),
             "--workers", str(int(body.get("workers", 3) or 3)),
-            "--export-delay", str(int(body.get("export_delay", 180) or 180))]
+            "--export-delay", str(int(body.get("export_delay", 0) or 0))]
     if body.get("limit"):
         args += ["--limit", str(int(body["limit"]))]
     if dry:
@@ -1119,7 +1119,7 @@ def api_probe3p_run():
     body = request.get_json(force=True, silent=True) or {}
     action = "delete" if body.get("action") == "delete" else "swap"
     args = ["_probe3p.py", "--workers", str(int(body.get("workers", 12) or 12)), "--action", action,
-            "--export-delay", str(int(body.get("export_delay", 180) or 180))]
+            "--export-delay", str(int(body.get("export_delay", 0) or 0))]
     dry = bool(body.get("dry_run"))
     if dry:
         args += ["--dry-run"]
@@ -1227,7 +1227,7 @@ def _autoswap_loop():
             if TASK.running:
                 _AUTOSWAP["last_msg"] = "有任务在跑,本轮跳过(下轮再试)"
             else:
-                a = ["_autoswap.py", "--threshold", str(_AUTOSWAP["threshold"]), "--workers", "3", "--export-delay", "90"]
+                a = ["_autoswap.py", "--threshold", str(_AUTOSWAP["threshold"]), "--workers", "3", "--export-delay", "0"]
                 ok, msg = TASK.start(py_cmd(*a), "定时自动换<%d分子号" % _AUTOSWAP["threshold"])
                 _AUTOSWAP["last_run"] = int(_t.time())
                 _AUTOSWAP["last_msg"] = "已启动一轮(看实时日志)" if ok else ("启动失败:%s" % msg)
